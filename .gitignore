@@ -1,0 +1,23 @@
+# Secrets - NEVER commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local spec/skill files (not part of the bot)
+*.txt.bak
+API Poly.txt
+skill-*.md
+polybuk-framework-spec-v1.md
