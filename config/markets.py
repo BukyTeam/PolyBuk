@@ -52,15 +52,29 @@ class Market:
 # Start with 1 market. Add more after paper trading validates.
 
 MM_MARKETS: list[Market] = [
-    # === ADD YOUR MARKETS HERE ===
-    # Example (replace with real token_id and condition_id):
-    # Market(
-    #     token_id="71321044878070.......rest-of-id",
-    #     condition_id="0x1234567890abcdef.......rest-of-id",
-    #     name="Lakers vs Celtics - Lakers Win",
-    #     category="sports",
-    #     notes="Added 2026-04-15. Good spread ~$0.04, volume $120K",
-    # ),
+    # --- Active markets added 2026-04-12 ---
+    # Champions League quarter-finals
+    Market(
+        token_id="98823714150622743440160382935670868763485312813237170221450878540264503721708",
+        condition_id="0x368d8be588fc5dae12691b9d3fc5c757a7514e0fab86f4c18ec6b25eebddb7fe",
+        name="FC Barcelona win 2026-04-14",
+        category="sports",
+        notes="Added 2026-04-12. YES=$0.545, 24h vol=$207K, liq=$193K. UCL QF.",
+    ),
+    Market(
+        token_id="107465213618836390501776174005739694959470187392142407058085317714613067213535",
+        condition_id="0xecc2bcecc21ad7d87925a1808b4657b22523996d4ab83e38ef970e3c25db1b11",
+        name="PSG win 2026-04-14",
+        category="sports",
+        notes="Added 2026-04-12. YES=$0.395, 24h vol=$62K, liq=$781K. UCL QF vs Liverpool.",
+    ),
+    Market(
+        token_id="107968591323106278367665655742307705452190612363508117328460265642342810950484",
+        condition_id="0x7ee56fa66c1e16ca268f182716b63d8062b204229430724ad85ff5949f7d81d9",
+        name="Bayern Munchen win 2026-04-15",
+        category="sports",
+        notes="Added 2026-04-12. YES=$0.625, 24h vol=$77K, liq=$729K. UCL QF.",
+    ),
 ]
 
 
