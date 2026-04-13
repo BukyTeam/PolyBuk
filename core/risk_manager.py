@@ -116,11 +116,14 @@ class RiskManager:
         if value > self._pool_balances[pool]:
             return False, f"{pool} insufficient balance: ${self._pool_balances[pool]:.2f} < ${value:.2f} needed"
 
-        # MM exposure check
+        # MM exposure check — only block orders that INCREASE exposure beyond limit
         if pool == "mm_pool":
             max_exp = settings.risk.max_mm_exposure_contracts
-            if abs(net_exposure) >= max_exp and side == "BUY" if net_exposure > 0 else side == "SELL":
-                return False, f"MM exposure limit: {abs(net_exposure)} contracts >= {max_exp} max. Only reducing positions allowed."
+            if abs(net_exposure) >= max_exp:
+                # Over limit: only allow orders that REDUCE exposure
+                increasing = (net_exposure > 0 and side == "BUY") or (net_exposure < 0 and side == "SELL")
+                if increasing:
+                    return False, f"MM exposure limit: {abs(net_exposure)} contracts >= {max_exp} max. Only reducing positions allowed."
 
         # NC-specific checks
         if pool == "nc_pool":
