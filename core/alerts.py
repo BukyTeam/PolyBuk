@@ -182,33 +182,96 @@ class TelegramAlerts:
     async def _handle_status(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle /status command — show current state."""
+        """Handle /status command — show detailed state with markets."""
         if str(update.effective_chat.id) != self._chat_id:
             return
+
+        from config.markets import get_mm_markets, get_nc_markets
+        from core.inventory_manager import inventory_manager
+        from core.paper_trading import paper_engine
+        from core.supabase_client import db
 
         status = risk_manager.get_status()
         mode = "PAPER" if settings.paper.enabled else "LIVE"
 
-        lines = [
-            f"Estado PolyBuk [{mode}]",
-            f"",
-            f"Pools:",
-            f"  MM: ${status['pool_balances']['mm_pool']:,.2f}"
-            f" {'(pausado)' if status['pool_paused']['mm_pool'] else ''}"
-            f" {'(DETENIDO)' if status['pool_stopped']['mm_pool'] else ''}",
-            f"  NC: ${status['pool_balances']['nc_pool']:,.2f}"
-            f" {'(pausado)' if status['pool_paused']['nc_pool'] else ''}"
-            f" {'(DETENIDO)' if status['pool_stopped']['nc_pool'] else ''}",
-            f"  Reserva: ${status['pool_balances']['reserve']:,.2f}",
-            f"",
+        # --- Header ---
+        lines = [f"PolyBuk [{mode}]", ""]
+
+        # --- Active Markets ---
+        mm_markets = get_mm_markets()
+        if mm_markets:
+            lines.append("Mercados MM activos:")
+            for m in mm_markets:
+                inv = inventory_manager.get_net_inventory(m.token_id)
+                inv_str = f" inv={inv:+d}" if inv != 0 else ""
+                lines.append(f"  {m.name}{inv_str}")
+            lines.append("")
+
+        nc_markets = get_nc_markets()
+        if nc_markets:
+            lines.append("Mercados NC activos:")
+            for m in nc_markets:
+                lines.append(f"  {m.name}")
+            lines.append("")
+
+        # --- Last 3 trades from Supabase ---
+        recent = db.select(
+            "trades",
+            columns="side, price, quantity, market_name, created_at",
+            order_by="created_at",
+            descending=True,
+            limit=3,
+        )
+        if recent:
+            lines.append("Ultimos trades:")
+            for t in recent:
+                name = (t.get("market_name") or "?")[:25]
+                side = t.get("side", "?")
+                price = float(t.get("price", 0))
+                qty = t.get("quantity", 0)
+                ts = str(t.get("created_at", ""))[11:19]
+                lines.append(f"  {side} {qty}x ${price:.2f} {name} [{ts}]")
+            lines.append("")
+
+        # --- Trade count today ---
+        today_trades = db.select(
+            "trades",
+            columns="id",
+            filters={"paper_trade": True} if settings.paper.enabled else None,
+        )
+        total_trades = len(today_trades)
+
+        # --- Paper stats ---
+        if settings.paper.enabled:
+            pstats = paper_engine.get_stats()
+            lines.append(f"Paper vol: ${pstats['total_volume']:,.2f}")
+            lines.append(f"Paper trades: {pstats['total_trades']}")
+            lines.append(f"Paper P&L: ${pstats['total_realized_pnl']:+,.2f}")
+            lines.append("")
+
+        # --- Pools & Risk ---
+        lines.append("Pools:")
+        mm_flag = " PAUSADO" if status["pool_paused"]["mm_pool"] else ""
+        mm_flag = " DETENIDO" if status["pool_stopped"]["mm_pool"] else mm_flag
+        nc_flag = " PAUSADO" if status["pool_paused"]["nc_pool"] else ""
+        nc_flag = " DETENIDO" if status["pool_stopped"]["nc_pool"] else nc_flag
+        lines.append(f"  MM: ${status['pool_balances']['mm_pool']:,.2f}{mm_flag}")
+        lines.append(f"  NC: ${status['pool_balances']['nc_pool']:,.2f}{nc_flag}")
+        lines.append(f"  Reserva: ${status['pool_balances']['reserve']:,.2f}")
+        lines.append("")
+
+        lines.append(
             f"P&L hoy: MM ${status['daily_pnl']['mm_pool']:+,.2f} | "
-            f"NC ${status['daily_pnl']['nc_pool']:+,.2f}",
-            f"P&L total: ${status['total_pnl']:+,.2f}",
-            f"",
-            f"NC fallos: {status['nc_failures']}/{settings.nc.max_failures}",
-            f"API errors: {status['api_errors']}",
-            f"Kill switch: {'ACTIVO' if status['kill_switch'] else 'inactivo'}",
-        ]
+            f"NC ${status['daily_pnl']['nc_pool']:+,.2f}"
+        )
+        lines.append(f"P&L total: ${status['total_pnl']:+,.2f}")
+
+        if status["nc_failures"] > 0:
+            lines.append(f"NC fallos: {status['nc_failures']}/{settings.nc.max_failures}")
+        if status["api_errors"] > 0:
+            lines.append(f"API errors: {status['api_errors']}")
+        if status["kill_switch"]:
+            lines.append("KILL SWITCH ACTIVO")
 
         await update.message.reply_text("\n".join(lines))
 
