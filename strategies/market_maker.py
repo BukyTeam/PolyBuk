@@ -296,10 +296,11 @@ class MarketMakerStrategy(BaseStrategy):
             if not bids or not asks:
                 return None, None, None, None
 
-            # Bids are sorted descending (highest first)
-            # Asks are sorted ascending (lowest first)
-            best_bid = float(bids[0].price if hasattr(bids[0], "price") else bids[0].get("price", 0))
-            best_ask = float(asks[0].price if hasattr(asks[0], "price") else asks[0].get("price", 0))
+            # py-clob-client sorts bids ASCENDING (lowest first) and asks DESCENDING
+            # (highest first). So the BEST bid is the LAST bid, and the BEST ask
+            # is the LAST ask.
+            best_bid = float(bids[-1].price if hasattr(bids[-1], "price") else bids[-1].get("price", 0))
+            best_ask = float(asks[-1].price if hasattr(asks[-1], "price") else asks[-1].get("price", 0))
 
             if best_bid <= 0 or best_ask <= 0:
                 return None, None, None, None
@@ -343,11 +344,17 @@ class MarketMakerStrategy(BaseStrategy):
 
         Depth = how much money is sitting in the orderbook near the
         best price. More depth = more liquid market = safer to trade.
+
+        Since py-clob-client sorts bids ascending and asks descending,
+        the best prices are at the END of each list. We take the last
+        N levels (the ones closest to mid price).
         """
         try:
             orders = book.get(side, []) if isinstance(book, dict) else getattr(book, side, [])
+            # Take the last N levels (best prices)
+            best_levels = orders[-levels:] if len(orders) >= levels else orders
             total = 0.0
-            for order in orders[:levels]:
+            for order in best_levels:
                 price = float(order.price if hasattr(order, "price") else order.get("price", 0))
                 size = float(order.size if hasattr(order, "size") else order.get("size", 0))
                 total += price * size
