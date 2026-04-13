@@ -123,7 +123,7 @@ class MarketMakerSettings:
     half_spread_offset: float = 0.01   # Added to each side of mid price
     max_exposure: int = 50             # Max net contracts in one direction
     stale_order_seconds: int = 180     # Cancel orders older than 3 minutes
-    min_spread: float = 0.02           # Skip if spread too tight (no profit)
+    min_spread: float = 0.01           # Skip if spread too tight (Polymarket min tick is $0.01)
     max_spread: float = 0.15           # Skip if spread too wide (likely illiquid/risky)
     min_price: float = 0.10            # Don't operate at extremes
     max_price: float = 0.90            # Don't operate at extremes
