@@ -72,6 +72,11 @@ class Journal:
             "fee_paid": fee_paid,
             "execution_time_ms": execution_time_ms,
             "pool": pool,
+            # The paper_trade column is a historical artifact from the
+            # retired paper-trading module. Set explicitly to False so
+            # live trades don't collide with leftover paper rows when
+            # the volume KPI filters on this column.
+            "paper_trade": False,
         }
         row = db.insert("trades", data)
         if row:
@@ -274,14 +279,19 @@ class Journal:
     # number derived from the same source of truth (polybuk.trades).
 
     def get_cumulative_volume(self) -> float:
-        """Total USDC volume across every row in polybuk.trades.
+        """Total USDC volume across every LIVE row in polybuk.trades.
 
-        Uses the raw supabase client to select only notional_value —
-        the select() helper has no aggregation support and we don't
-        need to pull full rows just to sum one column.
+        Filters out paper_trade=True rows — those are historical data
+        from the retired paper-trading module and must not inflate the
+        Referral Program progress KPI.
         """
         try:
-            resp = db._client.table("trades").select("notional_value").execute()
+            resp = (
+                db._client.table("trades")
+                .select("notional_value")
+                .eq("paper_trade", False)
+                .execute()
+            )
             total = sum(
                 float(r.get("notional_value") or 0) for r in (resp.data or [])
             )
@@ -291,11 +301,12 @@ class Journal:
             return 0.0
 
     def get_volume_since(self, since_iso: str) -> float:
-        """USDC volume since a given ISO 8601 timestamp (UTC)."""
+        """USDC live volume since a given ISO 8601 timestamp (UTC)."""
         try:
             resp = (
                 db._client.table("trades")
                 .select("notional_value")
+                .eq("paper_trade", False)
                 .gte("created_at", since_iso)
                 .execute()
             )
