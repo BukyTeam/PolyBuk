@@ -68,22 +68,22 @@ class PolymarketClient:
 
             # Step 1: Create client with private key.
             # If a funder_address is configured, the account is a Polymarket
-            # Gnosis Safe proxy — the EOA signs but funds live at the Safe.
-            # signature_type=2 (POLY_GNOSIS_SAFE) tells py-clob-client to
-            # sign orders on behalf of the Safe and report its balance.
-            # Accounts created via the Polymarket web UI are Safe-based by
-            # default, so most users will have this set.
+            # proxy wallet — the EOA signs but funds live at the proxy.
+            # Polymarket uses EIP-1167 minimal proxies (signature_type=1,
+            # POLY_PROXY) for accounts created via their email/magic-link
+            # Relayer flow — NOT Gnosis Safe. We verified the user's proxy
+            # contract on-chain and it matches the EIP-1167 clone pattern.
             funder = settings.polymarket.funder_address.strip()
             if funder:
                 self._clob = ClobClient(
                     host=CLOB_HOST,
                     key=private_key,
                     chain_id=POLYGON_CHAIN_ID,
-                    signature_type=2,  # POLY_GNOSIS_SAFE
+                    signature_type=1,  # POLY_PROXY (EIP-1167)
                     funder=funder,
                 )
                 logger.info(
-                    f"Polymarket CLOB client in Gnosis Safe mode "
+                    f"Polymarket CLOB client in POLY_PROXY mode "
                     f"(funder: {funder[:10]}...{funder[-6:]})"
                 )
             else:
