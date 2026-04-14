@@ -260,7 +260,7 @@ class MarketMakerStrategy(BaseStrategy):
         if order_value > settings.mm.max_order_value:
             order_size = int(settings.mm.max_order_value / my_bid)
 
-        # Place BID (buy order)
+        # Place BID (buy order) — capital check is in risk_manager
         bid_result = order_manager.place_order(
             strategy=self.name,
             pool=self.pool,
@@ -273,18 +273,32 @@ class MarketMakerStrategy(BaseStrategy):
             net_exposure=inventory,
         )
 
-        # Place ASK (sell order)
-        ask_result = order_manager.place_order(
-            strategy=self.name,
-            pool=self.pool,
-            token_id=market.token_id,
-            side="SELL",
-            price=my_ask,
-            size=order_size,
-            market_name=market.name,
-            market_category=market.category,
-            net_exposure=inventory,
-        )
+        # Place ASK (sell order) — ONLY if we actually hold tokens to sell.
+        # Polymarket's regular markets reject naked shorts with 400 balance:0.
+        # Clip size to the inventory we actually own so partial inventory
+        # doesn't rejected either ("balance: 5, order amount: 20").
+        ask_result = None
+        if inventory > 0:
+            sell_size = min(order_size, inventory)
+            ask_result = order_manager.place_order(
+                strategy=self.name,
+                pool=self.pool,
+                token_id=market.token_id,
+                side="SELL",
+                price=my_ask,
+                size=sell_size,
+                market_name=market.name,
+                market_category=market.category,
+                net_exposure=inventory,
+            )
+        else:
+            journal.log_decision(
+                strategy=self.name,
+                market_id=market.token_id,
+                action="skip_sell",
+                reason=f"No inventory to sell (inventory={inventory}). SELL skipped until a BUY fills.",
+                context={"inventory": inventory, "intended_ask": my_ask},
+            )
 
         # === STEP 7: LOG SNAPSHOT ===
         journal.log_snapshot(

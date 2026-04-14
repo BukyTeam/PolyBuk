@@ -188,11 +188,14 @@ class OrderManager:
         """Cancel orders older than max_age_seconds.
 
         The market maker calls this every cycle to remove orders that
-        haven't filled. Stale orders use up capital without providing
-        value — the market has moved past them.
+        haven't filled. Stale orders lock up pool balance without
+        providing value — the market has moved past them.
 
         Args:
-            market_id: Filter to specific market (optional)
+            market_id: token_id (asset_id) to filter to. Optional.
+                       Server-side OpenOrderParams.market expects a
+                       condition_id, not a token_id, so we fetch ALL
+                       open orders and filter client-side by asset_id.
             max_age_seconds: Override default (180s from settings)
 
         Returns number of orders cancelled.
@@ -200,22 +203,32 @@ class OrderManager:
         if max_age_seconds is None:
             max_age_seconds = settings.mm.stale_order_seconds
 
-        orders = self.get_open_orders(market_id)
+        orders = self.get_open_orders()  # fetch all; no broken server filter
+
+        if market_id:
+            orders = [o for o in orders if o.get("asset_id") == market_id]
+
         cancelled = 0
         now = time.time()
 
         for order in orders:
-            # py-clob-client returns timestamp as string or int
-            order_time = order.get("timestamp", order.get("createdAt", 0))
-            if isinstance(order_time, str):
-                try:
-                    order_time = float(order_time)
-                except ValueError:
-                    continue
+            raw_ts = (
+                order.get("created_at")
+                or order.get("createdAt")
+                or order.get("timestamp", 0)
+            )
+            try:
+                order_time = float(raw_ts)
+            except (TypeError, ValueError):
+                continue
 
             age = now - order_time
             if age > max_age_seconds:
-                order_id = order.get("id", order.get("orderID", ""))
+                order_id = (
+                    order.get("id")
+                    or order.get("orderID")
+                    or order.get("order_id", "")
+                )
                 if order_id and self.cancel_order(order_id):
                     cancelled += 1
                     logger.debug(
