@@ -279,11 +279,19 @@ class PolymarketClient:
         """Get detailed info about a specific market.
 
         Used to check resolution date, outcome, metadata.
+
+        Gamma API lookup by condition_id is done via query param
+        (/markets?condition_ids=0x...), not path param. The path form
+        /markets/{id} only accepts Gamma's internal numeric id and
+        returns 422 for condition_ids.
         """
         try:
-            resp = self._http.get(f"/markets/{condition_id}")
+            resp = self._http.get("/markets", params={"condition_ids": condition_id})
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+            if isinstance(data, list):
+                return data[0] if data else None
+            return data
         except Exception as e:
             logger.error(f"get_market_info failed for {condition_id}: {e}")
             return None
@@ -303,7 +311,9 @@ class PolymarketClient:
         does not return a direct 'resolving' boolean.
         """
         try:
-            resp = self._http.get(f"/markets/{condition_id}")
+            # Gamma only accepts condition_ids via query param; path form
+            # /markets/{id} returns 422 for hex condition ids.
+            resp = self._http.get("/markets", params={"condition_ids": condition_id})
             resp.raise_for_status()
             data = resp.json()
 
