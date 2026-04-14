@@ -26,6 +26,7 @@ from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from config.settings import settings
+from core.journal import journal
 from core.risk_manager import risk_manager
 
 logger = logging.getLogger(__name__)
@@ -78,24 +79,26 @@ class TelegramAlerts:
     async def send_hourly_summary(
         self,
         volume_hour: float,
-        volume_cumulative: float,
-        volume_target: float,
         pnl_hour: float,
         mm_pool: float,
         nc_pool: float,
         reserve: float,
     ) -> bool:
-        """Send hourly status update (spec format)."""
+        """Send hourly status update.
+
+        Cumulative volume / target / percent are fetched from the journal
+        (single source of truth: polybuk.trades) so every reporting path
+        shows the same KPI.
+        """
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).strftime("%H:%M UTC")
-        pct = (volume_cumulative / volume_target * 100) if volume_target > 0 else 0
+        progress = journal.get_volume_progress()
 
         msg = (
             f"Resumen horaria — {now}\n"
+            f"{journal.format_volume_progress(progress)}\n"
             f"Volumen ultima hora: ${volume_hour:,.2f}\n"
-            f"Volumen acumulado: ${volume_cumulative:,.2f} / "
-            f"${volume_target:,.0f} ({pct:.1f}%)\n"
             f"P&L hora: ${pnl_hour:+,.2f}\n"
             f"MM Pool: ${mm_pool:,.2f} | NC Pool: ${nc_pool:,.2f} | "
             f"Reserva: ${reserve:,.2f}"
@@ -106,8 +109,6 @@ class TelegramAlerts:
         self,
         date: str,
         volume_today: float,
-        volume_cumulative: float,
-        volume_target: float,
         pnl_today: float,
         pnl_cumulative: float,
         trades_count: int,
@@ -115,14 +116,13 @@ class TelegramAlerts:
         nc_trades: int,
         avg_spread: float,
     ) -> bool:
-        """Send daily report (spec format)."""
-        pct = (volume_cumulative / volume_target * 100) if volume_target > 0 else 0
+        """Send daily report. Volume KPI is pulled from the journal."""
+        progress = journal.get_volume_progress()
 
         msg = (
             f"Reporte diario — {date}\n"
+            f"{journal.format_volume_progress(progress)}\n"
             f"Volumen hoy: ${volume_today:,.2f}\n"
-            f"Acumulado: ${volume_cumulative:,.2f} / "
-            f"${volume_target:,.0f} ({pct:.1f}%)\n"
             f"P&L hoy: ${pnl_today:+,.2f} | "
             f"Acumulado: ${pnl_cumulative:+,.2f}\n"
             f"Trades: {trades_count} ({mm_trades} MM, {nc_trades} NC)\n"
@@ -147,9 +147,10 @@ class TelegramAlerts:
 
     async def send_startup_message(self) -> bool:
         """Notify that the bot has started."""
-        mode = "PAPER" if settings.paper.enabled else "LIVE"
+        progress = journal.get_volume_progress()
         msg = (
-            f"PolyBuk iniciado [{mode}]\n"
+            f"PolyBuk iniciado [LIVE]\n"
+            f"{journal.format_volume_progress(progress)}\n"
             f"MM Pool: ${settings.risk.mm_pool:,.2f}\n"
             f"NC Pool: ${settings.risk.nc_pool:,.2f}\n"
             f"Reserve: ${settings.risk.reserve:,.2f}"
@@ -188,14 +189,17 @@ class TelegramAlerts:
 
         from config.markets import get_mm_markets, get_nc_markets
         from core.inventory_manager import inventory_manager
-        from core.paper_trading import paper_engine
         from core.supabase_client import db
 
         status = risk_manager.get_status()
-        mode = "PAPER" if settings.paper.enabled else "LIVE"
 
-        # --- Header ---
-        lines = [f"PolyBuk [{mode}]", ""]
+        # --- Header with volume KPI (the #1 project metric) ---
+        progress = journal.get_volume_progress()
+        lines = [
+            "PolyBuk [LIVE]",
+            journal.format_volume_progress(progress),
+            "",
+        ]
 
         # --- Active Markets ---
         mm_markets = get_mm_markets()
@@ -231,22 +235,6 @@ class TelegramAlerts:
                 qty = t.get("quantity", 0)
                 ts = str(t.get("created_at", ""))[11:19]
                 lines.append(f"  {side} {qty}x ${price:.2f} {name} [{ts}]")
-            lines.append("")
-
-        # --- Trade count today ---
-        today_trades = db.select(
-            "trades",
-            columns="id",
-            filters={"paper_trade": True} if settings.paper.enabled else None,
-        )
-        total_trades = len(today_trades)
-
-        # --- Paper stats ---
-        if settings.paper.enabled:
-            pstats = paper_engine.get_stats()
-            lines.append(f"Paper vol: ${pstats['total_volume']:,.2f}")
-            lines.append(f"Paper trades: {pstats['total_trades']}")
-            lines.append(f"Paper P&L: ${pstats['total_realized_pnl']:+,.2f}")
             lines.append("")
 
         # --- Pools & Risk ---

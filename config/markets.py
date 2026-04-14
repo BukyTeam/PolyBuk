@@ -49,7 +49,7 @@ class Market:
 #   - Price: $0.20 - $0.80 (avoid extremes)
 #   - Resolution: 1-7 days out
 #
-# Start with 1 market. Add more after paper trading validates.
+# Start with 1 market. Add more after the live test validates execution.
 
 MM_MARKETS: list[Market] = [
     # --- Active markets added 2026-04-12 ---

@@ -4,7 +4,7 @@ PolyBuk - Order Manager
 The ONLY module that places and cancels orders. All strategies go through
 here. This enforces the flow:
 
-    Strategy → Risk Check → Paper/Live Execution → Journal Logging
+    Strategy → Risk Check → Live Execution → Journal Logging
 
 Never call polymarket_client.place_limit_order() directly from a strategy.
 Always go through order_manager.
@@ -49,7 +49,7 @@ class OrderManager:
         This is the main method strategies call. It:
         1. Calculates order value
         2. Asks risk_manager if the order is allowed
-        3. Places the order (paper or live)
+        3. Places the order on Polymarket
         4. Logs the trade and decision to journal
 
         Args:
@@ -65,7 +65,6 @@ class OrderManager:
             API response dict on success, None on failure/rejection.
         """
         order_value = round(price * size, 4)
-        is_paper = settings.paper.enabled
 
         # --- Risk check ---
         allowed, reason = risk_manager.check_order(
@@ -94,37 +93,22 @@ class OrderManager:
 
         # --- Execute order ---
         start_ms = int(time.time() * 1000)
-
-        if is_paper:
-            # Paper mode: simulate execution at the requested price
-            resp = {
-                "orderID": f"paper_{int(time.time())}_{side}_{token_id[:8]}",
-                "status": "FILLED",
-                "paper": True,
-            }
-            logger.info(
-                f"[PAPER] {side} {size}x @ ${price:.4f} on {token_id[:16]}..."
+        resp = polymarket_client.place_limit_order(
+            token_id=token_id,
+            side=side,
+            price=price,
+            size=float(size),
+        )
+        if resp is None:
+            risk_manager.record_api_error()
+            journal.log_decision(
+                strategy=strategy,
+                market_id=token_id,
+                action="order_failed",
+                reason="API call to place_limit_order returned None",
             )
-        else:
-            # Live mode: send order to Polymarket
-            resp = polymarket_client.place_limit_order(
-                token_id=token_id,
-                side=side,
-                price=price,
-                size=float(size),
-            )
-            if resp is None:
-                risk_manager.record_api_error()
-                journal.log_decision(
-                    strategy=strategy,
-                    market_id=token_id,
-                    action="order_failed",
-                    reason="API call to place_limit_order returned None",
-                    paper_trade=False,
-                )
-                return None
-            else:
-                risk_manager.record_api_success()
+            return None
+        risk_manager.record_api_success()
 
         execution_time_ms = int(time.time() * 1000) - start_ms
 
@@ -139,7 +123,6 @@ class OrderManager:
             quantity=size,
             pool=pool,
             execution_time_ms=execution_time_ms,
-            paper_trade=is_paper,
         )
 
         # --- Log decision ---
@@ -149,7 +132,7 @@ class OrderManager:
             action=f"place_{side.lower()}",
             reason=(
                 f"{side} {size} contracts @ ${price:.4f} = ${order_value:.2f}. "
-                f"Pool: {pool}. {'Paper mode.' if is_paper else 'Live order.'}"
+                f"Pool: {pool}."
             ),
             context={
                 "price": price,
@@ -159,7 +142,6 @@ class OrderManager:
                 "net_exposure": net_exposure,
                 "execution_time_ms": execution_time_ms,
             },
-            paper_trade=is_paper,
         )
 
         return resp
@@ -169,46 +151,30 @@ class OrderManager:
 
         Returns True if cancelled successfully, False otherwise.
         """
-        if settings.paper.enabled:
-            logger.info(f"[PAPER] Cancel order {order_id}")
-            return True
-
         resp = polymarket_client.cancel_order(order_id)
         if resp is not None:
             risk_manager.record_api_success()
             return True
-        else:
-            risk_manager.record_api_error()
-            return False
+        risk_manager.record_api_error()
+        return False
 
     def cancel_all_orders(self) -> bool:
         """Cancel ALL open orders. Used by kill switch.
 
         Returns True if cancelled successfully.
         """
-        if settings.paper.enabled:
-            logger.info("[PAPER] All orders cancelled")
-            return True
-
         resp = polymarket_client.cancel_all_orders()
         if resp is not None:
             risk_manager.record_api_success()
-            logger.info("All orders cancelled (live)")
+            logger.info("All orders cancelled")
             return True
-        else:
-            risk_manager.record_api_error()
-            return False
+        risk_manager.record_api_error()
+        return False
 
     def get_open_orders(
         self, market_id: str | None = None
     ) -> list[dict[str, Any]]:
-        """Get currently open orders.
-
-        In paper mode, returns empty list (paper orders fill instantly).
-        """
-        if settings.paper.enabled:
-            return []
-
+        """Get currently open orders."""
         orders = polymarket_client.get_open_orders(market_id)
         if orders:
             risk_manager.record_api_success()
@@ -231,9 +197,6 @@ class OrderManager:
 
         Returns number of orders cancelled.
         """
-        if settings.paper.enabled:
-            return 0
-
         if max_age_seconds is None:
             max_age_seconds = settings.mm.stale_order_seconds
 

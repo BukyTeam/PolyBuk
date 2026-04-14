@@ -150,7 +150,7 @@ class RiskManager:
     def record_trade_result(self, pool: str, pnl: float) -> None:
         """Record the P&L from a completed trade.
 
-        Called after a trade executes (or simulated in paper mode).
+        Called after a trade executes.
         Updates daily and cumulative P&L, and triggers circuit breakers
         if thresholds are crossed.
 

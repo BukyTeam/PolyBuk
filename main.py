@@ -2,8 +2,7 @@
 PolyBuk Trading Framework — Entry Point
 
 Usage:
-    python main.py                    # Run both strategies (uses PAPER_MODE from .env)
-    python main.py --paper            # Force paper mode
+    python main.py                    # Run both strategies
     python main.py --strategy mm      # Only market maker
     python main.py --strategy nc      # Only near-certainties
     python main.py --dry-run          # Initialize everything, run 1 cycle, then exit
@@ -55,11 +54,6 @@ def setup_logging() -> None:
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="PolyBuk Trading Framework")
-    parser.add_argument(
-        "--paper",
-        action="store_true",
-        help="Force paper trading mode (overrides .env)",
-    )
     parser.add_argument(
         "--strategy",
         choices=["mm", "nc", "both"],
@@ -148,12 +142,7 @@ async def main() -> None:
     args = parse_args()
     setup_logging()
 
-    # Override paper mode from CLI flag
-    if args.paper:
-        os.environ["PAPER_MODE"] = "true"
-
-    mode = "PAPER" if settings.paper.enabled else "LIVE"
-    logger.info(f"=== PolyBuk Framework Starting [{mode}] ===")
+    logger.info("=== PolyBuk Framework Starting [LIVE] ===")
 
     # Initialize all clients
     if not await initialize_clients():
@@ -163,7 +152,7 @@ async def main() -> None:
     # Save config snapshot
     config_manager.save_snapshot(
         changed_by="system",
-        change_reason=f"Bot startup ({mode} mode, strategy={args.strategy})",
+        change_reason=f"Bot startup (strategy={args.strategy})",
     )
 
     # Send Telegram startup message
@@ -172,9 +161,8 @@ async def main() -> None:
     # Log startup to journal
     journal.log_human(
         action="bot_startup",
-        details=f"PolyBuk started in {mode} mode. Strategy: {args.strategy}.",
+        details=f"PolyBuk started. Strategy: {args.strategy}.",
         context={
-            "mode": mode,
             "strategy": args.strategy,
             "dry_run": args.dry_run,
         },

@@ -24,10 +24,10 @@ from typing import Any
 
 from config.markets import Market, get_mm_markets
 from config.settings import settings
+from core.alerts import alerts
 from core.inventory_manager import inventory_manager
 from core.journal import journal
 from core.order_manager import order_manager
-from core.paper_trading import paper_engine
 from core.polymarket_client import polymarket_client
 from core.risk_manager import risk_manager
 from strategies.base_strategy import BaseStrategy
@@ -132,6 +132,69 @@ class MarketMakerStrategy(BaseStrategy):
         risk_manager.record_api_success()
         inventory = inventory_manager.get_net_inventory(market.token_id)
 
+        # === STEP 1B: VALIDATE MARKET STATUS VIA GAMMA API ===
+        market_status = polymarket_client.get_market_status(market.condition_id)
+
+        if market_status is None:
+            journal.log_decision(
+                strategy=self.name,
+                market_id=market.token_id,
+                action="skip_cycle",
+                reason="Could not fetch market status from Gamma API — skipping for safety",
+                )
+            return
+
+        if market_status["closed"] or market_status["outcome"] is not None:
+            journal.log_decision(
+                strategy=self.name,
+                market_id=market.token_id,
+                action="skip_cycle",
+                reason=(
+                    f"Market closed/resolved. Outcome: {market_status['outcome']}. "
+                    f"Remove from config/markets.py."
+                ),
+                )
+            await alerts.send_alert(
+                f"MERCADO RESUELTO — remover de config/markets.py:\n"
+                f"{market.name}\n"
+                f"Outcome: {market_status['outcome']}"
+            )
+            return
+
+        if market_status["resolving"]:
+            journal.log_decision(
+                strategy=self.name,
+                market_id=market.token_id,
+                action="skip_cycle",
+                reason="Market in 'resolving' state (UMA dispute window) — skipping",
+                )
+            return
+
+        if market_status["hours_to_resolution"] is not None:
+            buffer_ok, buffer_reason = risk_manager.check_resolution_buffer(
+                market_status["hours_to_resolution"]
+            )
+            if not buffer_ok:
+                journal.log_decision(
+                    strategy=self.name,
+                    market_id=market.token_id,
+                    action="resolution_buffer_triggered",
+                    reason=buffer_reason,
+                    context={
+                        "hours_to_resolution": market_status["hours_to_resolution"],
+                        "resolution_datetime": str(market_status["resolution_datetime"]),
+                    },
+                        )
+                order_manager.cancel_stale_orders(
+                    market_id=market.token_id, max_age_seconds=0
+                )
+                await alerts.send_alert(
+                    f"BUFFER RESOLUCIÓN activado: {market.name}\n"
+                    f"Resuelve en {market_status['hours_to_resolution']:.1f}h\n"
+                    f"Órdenes canceladas."
+                )
+                return
+
         # === STEP 2: CALCULATE ===
         best_bid, best_ask, mid_price, spread = self._extract_book_data(book)
 
@@ -223,23 +286,6 @@ class MarketMakerStrategy(BaseStrategy):
             net_exposure=inventory,
         )
 
-        # Update inventory for paper trades
-        if settings.paper.enabled:
-            if bid_result:
-                inventory_manager.update_position(
-                    market.token_id, "BUY", order_size
-                )
-                paper_engine.record_fill(
-                    market.token_id, "BUY", my_bid, order_size
-                )
-            if ask_result:
-                inventory_manager.update_position(
-                    market.token_id, "SELL", order_size
-                )
-                paper_engine.record_fill(
-                    market.token_id, "SELL", my_ask, order_size
-                )
-
         # === STEP 7: LOG SNAPSHOT ===
         journal.log_snapshot(
             market_id=market.token_id,
@@ -274,7 +320,6 @@ class MarketMakerStrategy(BaseStrategy):
                 "bid_placed": bid_result is not None,
                 "ask_placed": ask_result is not None,
             },
-            paper_trade=settings.paper.enabled,
         )
 
     # ================================================================

@@ -34,7 +34,7 @@ class ConfigManager:
         Called automatically at bot startup, and manually when you
         change parameters in settings.py.
 
-        The snapshot captures ALL settings (risk, MM, NC, paper mode, etc.)
+        The snapshot captures ALL settings (risk, MM, NC, general, etc.)
         as a single JSON blob. Credentials are excluded for security.
 
         Args:
@@ -47,7 +47,6 @@ class ConfigManager:
                 "risk": asdict(settings.risk),
                 "market_maker": asdict(settings.mm),
                 "near_certainties": asdict(settings.nc),
-                "paper_mode": settings.paper.enabled,
                 "general": asdict(settings.general),
             }
 

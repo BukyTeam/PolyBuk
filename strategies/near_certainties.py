@@ -28,7 +28,6 @@ from config.markets import Market, get_nc_markets
 from config.settings import settings
 from core.journal import journal
 from core.order_manager import order_manager
-from core.paper_trading import paper_engine
 from core.polymarket_client import polymarket_client
 from core.risk_manager import risk_manager
 from strategies.base_strategy import BaseStrategy
@@ -184,6 +183,51 @@ class NearCertaintiesStrategy(BaseStrategy):
             )
             return
 
+        # Validate market status before evaluating (skips closed/resolving markets
+        # and enforces NC's resolution-window bounds)
+        market_status = polymarket_client.get_market_status(market.condition_id)
+        if market_status is None:
+            logger.warning(f"Could not fetch status for {market.name} — skipping")
+            return
+
+        if (
+            market_status["closed"]
+            or market_status["resolving"]
+            or market_status["outcome"] is not None
+        ):
+            journal.log_decision(
+                strategy=self.name,
+                market_id=market.token_id,
+                action="skip_cycle",
+                reason=(
+                    f"Market not tradeable: closed={market_status['closed']}, "
+                    f"resolving={market_status['resolving']}, "
+                    f"outcome={market_status['outcome']}"
+                ),
+                )
+            return
+
+        if market_status["hours_to_resolution"] is not None:
+            hours = market_status["hours_to_resolution"]
+            if hours < settings.nc.min_resolution_hours:
+                journal.log_rejected(
+                    strategy=self.name,
+                    market_id=market.token_id,
+                    market_name=market.name,
+                    opportunity_type="nc_high_prob",
+                    reason=f"Resolves too soon: {hours:.1f}h < {settings.nc.min_resolution_hours}h minimum",
+                )
+                return
+            if hours > settings.nc.max_resolution_hours:
+                journal.log_rejected(
+                    strategy=self.name,
+                    market_id=market.token_id,
+                    market_name=market.name,
+                    opportunity_type="nc_high_prob",
+                    reason=f"Resolves too far: {hours:.1f}h > {settings.nc.max_resolution_hours}h maximum",
+                )
+                return
+
         # Get current price
         price = polymarket_client.get_price(market.token_id, "SELL")
         if price is None:
@@ -232,12 +276,6 @@ class NearCertaintiesStrategy(BaseStrategy):
             }
             self._open_categories.add(market.category)
 
-            # Record in paper engine
-            if settings.paper.enabled:
-                paper_engine.record_fill(
-                    market.token_id, "BUY", price, quantity
-                )
-
             logger.info(
                 f"NC position opened: {market.name} — "
                 f"{quantity} contracts @ ${price:.4f} = "
@@ -282,12 +320,22 @@ class NearCertaintiesStrategy(BaseStrategy):
                     },
                 )
 
-            # Check if market resolved (price = 1.0 or 0.0)
+            # Check resolution via Gamma API first (faster than waiting for
+            # price to hit the extreme). Win/loss is determined by whether
+            # OUR token settled high or low — we may hold YES or NO.
+            market_status = polymarket_client.get_market_status(market.condition_id)
+            if market_status and (
+                market_status["closed"] or market_status["outcome"] is not None
+            ):
+                won = current_price >= 0.5
+                settlement = 1.0 if won else 0.0
+                self._close_position(token_id, settlement_price=settlement, won=won)
+                continue
+
+            # Fallback: detect resolution from price extremes
             if current_price >= 0.99:
-                # Resolved YES — we win
                 self._close_position(token_id, settlement_price=1.0, won=True)
             elif current_price <= 0.01:
-                # Resolved NO — we lose
                 self._close_position(token_id, settlement_price=0.0, won=False)
 
     def _close_position(
@@ -311,10 +359,6 @@ class NearCertaintiesStrategy(BaseStrategy):
         if not won:
             risk_manager.record_nc_failure()
 
-        # Record in paper engine
-        if settings.paper.enabled:
-            paper_engine.close_position(token_id, settlement_price)
-
         # Log
         journal.log_decision(
             strategy=self.name,
@@ -333,7 +377,6 @@ class NearCertaintiesStrategy(BaseStrategy):
                 "pnl": pnl,
                 "won": won,
             },
-            paper_trade=settings.paper.enabled,
         )
 
         # Remove from tracking

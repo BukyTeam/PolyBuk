@@ -15,9 +15,9 @@ Usage:
 """
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
+from config.settings import settings
 from core.supabase_client import db
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,6 @@ class Journal:
         maker_rebate: float | None = None,
         fee_paid: float | None = None,
         execution_time_ms: int | None = None,
-        paper_trade: bool = False,
     ) -> dict[str, Any] | None:
         """Log an executed trade.
 
@@ -58,7 +57,6 @@ class Journal:
             price: Execution price
             quantity: Number of contracts
             pool: "mm_pool" or "nc_pool"
-            paper_trade: True if this was a simulated trade
         """
         data = {
             "strategy": strategy,
@@ -74,13 +72,11 @@ class Journal:
             "fee_paid": fee_paid,
             "execution_time_ms": execution_time_ms,
             "pool": pool,
-            "paper_trade": paper_trade,
         }
         row = db.insert("trades", data)
         if row:
             logger.info(
-                f"Trade logged: {strategy} {side} {quantity}x @ ${price:.4f} "
-                f"({pool}) {'[PAPER]' if paper_trade else '[LIVE]'}"
+                f"Trade logged: {strategy} {side} {quantity}x @ ${price:.4f} ({pool})"
             )
         return row
 
@@ -95,7 +91,6 @@ class Journal:
         action: str,
         reason: str,
         context: dict[str, Any] | None = None,
-        paper_trade: bool = False,
     ) -> dict[str, Any] | None:
         """Log a decision with its justification.
 
@@ -115,7 +110,6 @@ class Journal:
             "action": action,
             "reason": reason,
             "context": context,
-            "paper_trade": paper_trade,
         }
         row = db.insert("decisions", data)
         if row:
@@ -269,6 +263,72 @@ class Journal:
         if row:
             logger.info(f"Human decision logged: {action} — {details}")
         return row
+
+    # ================================================================
+    # Volume KPI — Referral Program progress
+    # ================================================================
+    #
+    # The $10K cumulative volume target is the #1 KPI of the project.
+    # These helpers centralize the volume math so every reporting path
+    # (/status, hourly summary, daily report, startup) shows the same
+    # number derived from the same source of truth (polybuk.trades).
+
+    def get_cumulative_volume(self) -> float:
+        """Total USDC volume across every row in polybuk.trades.
+
+        Uses the raw supabase client to select only notional_value —
+        the select() helper has no aggregation support and we don't
+        need to pull full rows just to sum one column.
+        """
+        try:
+            resp = db._client.table("trades").select("notional_value").execute()
+            total = sum(
+                float(r.get("notional_value") or 0) for r in (resp.data or [])
+            )
+            return round(total, 2)
+        except Exception as e:
+            logger.error(f"get_cumulative_volume failed: {e}")
+            return 0.0
+
+    def get_volume_since(self, since_iso: str) -> float:
+        """USDC volume since a given ISO 8601 timestamp (UTC)."""
+        try:
+            resp = (
+                db._client.table("trades")
+                .select("notional_value")
+                .gte("created_at", since_iso)
+                .execute()
+            )
+            total = sum(
+                float(r.get("notional_value") or 0) for r in (resp.data or [])
+            )
+            return round(total, 2)
+        except Exception as e:
+            logger.error(f"get_volume_since failed: {e}")
+            return 0.0
+
+    def get_volume_progress(self) -> dict[str, float]:
+        """Return the volume KPI: cumulative, target, and percent.
+
+        Used by every report to show a consistent headline:
+            "Volumen acumulado: $X / $10,000 (Y%)"
+        """
+        cumulative = self.get_cumulative_volume()
+        target = settings.general.volume_target
+        percent = (cumulative / target * 100) if target > 0 else 0.0
+        return {
+            "cumulative": cumulative,
+            "target": target,
+            "percent": round(percent, 2),
+        }
+
+    @staticmethod
+    def format_volume_progress(progress: dict[str, float]) -> str:
+        """One-line formatter for the volume KPI."""
+        return (
+            f"Volumen acumulado: ${progress['cumulative']:,.2f} / "
+            f"${progress['target']:,.0f} ({progress['percent']:.2f}%)"
+        )
 
 
 # Global instance — import this everywhere

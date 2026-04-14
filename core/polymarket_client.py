@@ -11,7 +11,9 @@ Authentication: CLOB credentials are derived automatically from your
 private key — no manual key generation needed.
 """
 
+import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -285,6 +287,92 @@ class PolymarketClient:
         except Exception as e:
             logger.error(f"get_market_info failed for {condition_id}: {e}")
             return None
+
+    def get_market_status(self, condition_id: str) -> dict[str, Any] | None:
+        """Fetch real-time market status from Gamma API.
+
+        Returns dict with: active, closed, resolving, accepting_orders,
+        resolution_datetime, hours_to_resolution, outcome, condition_id.
+
+        Returns None if the API call fails — caller should treat as
+        "unknown" and skip the market for safety.
+
+        Outcome detection: parses Gamma's outcomePrices/outcomes JSON arrays.
+        A token with price >= 0.99 is the winning outcome.
+        Resolving state is inferred from umaResolutionStatus, since Gamma
+        does not return a direct 'resolving' boolean.
+        """
+        try:
+            resp = self._http.get(f"/markets/{condition_id}")
+            resp.raise_for_status()
+            data = resp.json()
+
+            if isinstance(data, list):
+                if not data:
+                    logger.warning(f"get_market_status: empty list for {condition_id}")
+                    return None
+                data = data[0]
+
+            resolution_datetime = None
+            hours_to_resolution = None
+            end_iso = (
+                data.get("endDate")
+                or data.get("endDateIso")
+                or data.get("end_date_iso")
+            )
+            if end_iso:
+                try:
+                    resolution_datetime = datetime.fromisoformat(
+                        end_iso.replace("Z", "+00:00")
+                    )
+                    delta = resolution_datetime - datetime.now(timezone.utc)
+                    hours_to_resolution = delta.total_seconds() / 3600
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Could not parse endDate '{end_iso}': {e}")
+
+            active = bool(data.get("active", False))
+            closed = bool(data.get("closed", False))
+            accepting_orders = bool(data.get("acceptingOrders", True))
+
+            uma_status = (data.get("umaResolutionStatus") or "").lower()
+            # 'posed' / 'challenged' / 'disputed' = within UMA resolution window
+            resolving = uma_status in ("posed", "challenged", "disputed")
+
+            outcome = None
+            if closed or uma_status == "resolved":
+                outcome = self._parse_winning_outcome(
+                    data.get("outcomes"), data.get("outcomePrices")
+                )
+
+            return {
+                "condition_id": condition_id,
+                "active": active,
+                "closed": closed,
+                "resolving": resolving,
+                "accepting_orders": accepting_orders,
+                "resolution_datetime": resolution_datetime,
+                "hours_to_resolution": hours_to_resolution,
+                "outcome": outcome,
+            }
+
+        except Exception as e:
+            logger.error(f"get_market_status failed for {condition_id}: {e}")
+            return None
+
+    @staticmethod
+    def _parse_winning_outcome(outcomes_raw: Any, prices_raw: Any) -> str | None:
+        """Find the winning outcome name from Gamma's JSON-string arrays."""
+        try:
+            outcomes = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else (outcomes_raw or [])
+            prices = json.loads(prices_raw) if isinstance(prices_raw, str) else (prices_raw or [])
+            if not outcomes or not prices or len(outcomes) != len(prices):
+                return None
+            for name, price in zip(outcomes, prices):
+                if float(price) >= 0.99:
+                    return str(name).upper()
+        except (ValueError, TypeError):
+            pass
+        return None
 
     def get_events(self, limit: int = 50) -> list[dict[str, Any]]:
         """Get events (which contain multiple markets).

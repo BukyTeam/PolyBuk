@@ -25,10 +25,6 @@ def _env(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
-def _env_bool(key: str, default: bool = False) -> bool:
-    return _env(key, str(default)).lower() in ("true", "1", "yes")
-
-
 def _env_int(key: str, default: int = 0) -> int:
     return int(_env(key, str(default)))
 
@@ -89,17 +85,21 @@ class RiskSettings:
 
     Pools NEVER lend money to each other. Each pool is independent.
     Circuit breakers are safety nets that stop trading when losses exceed limits.
+
+    Sized for the initial $50 live test (2026-04-13). NC is disabled
+    (nc_pool = 0); only Market Maker runs during this phase. If the 3-day
+    test passes, deposit $350 more and re-scale to the spec's $400 design.
     """
     # Capital pools (in USDC)
-    total_capital: float = 400.0
-    mm_pool: float = 250.0          # Market Maker only
-    nc_pool: float = 100.0          # Near-Certainties only
-    reserve: float = 50.0           # Emergency, never touched by bot
+    total_capital: float = 50.0
+    mm_pool: float = 35.0           # Market Maker only
+    nc_pool: float = 0.0            # Disabled during $50 test
+    reserve: float = 15.0           # Buffer for gas / settlement slippage
 
-    # Circuit breakers — when to STOP trading
-    max_daily_loss_per_pool: float = 20.0    # Pause pool until tomorrow
-    max_cumulative_loss_per_pool: float = 50.0  # Stop pool permanently
-    max_total_loss: float = 80.0             # Stop EVERYTHING
+    # Circuit breakers — sized to the live test capital
+    max_daily_loss_per_pool: float = 5.0     # Pause pool until tomorrow
+    max_cumulative_loss_per_pool: float = 15.0  # Stop pool permanently
+    max_total_loss: float = 20.0             # Stop EVERYTHING (40% drawdown)
     max_mm_exposure_contracts: int = 100     # Only allow reducing positions
     max_consecutive_api_errors: int = 3      # Pause all trading
 
@@ -156,20 +156,6 @@ class NearCertaintiesSettings:
 
 
 # ============================================================
-# Paper Trading Settings (Spec Section 7)
-# ============================================================
-
-@dataclass(frozen=True)
-class PaperTradingSettings:
-    """Paper mode uses real market data but simulates order execution.
-
-    All trades logged with paper_trade=true in Supabase.
-    Must run 48+ hours before going live.
-    """
-    enabled: bool = field(default_factory=lambda: _env_bool("PAPER_MODE", True))
-
-
-# ============================================================
 # General Settings
 # ============================================================
 
@@ -192,8 +178,7 @@ class Settings:
     Usage:
         from config.settings import settings
         print(settings.mm.order_size)       # 20
-        print(settings.risk.mm_pool)        # 250.0
-        print(settings.paper.enabled)       # True
+        print(settings.risk.mm_pool)        # 35.0
     """
     polymarket: PolymarketCredentials = field(default_factory=PolymarketCredentials)
     supabase: SupabaseCredentials = field(default_factory=SupabaseCredentials)
@@ -201,7 +186,6 @@ class Settings:
     risk: RiskSettings = field(default_factory=RiskSettings)
     mm: MarketMakerSettings = field(default_factory=MarketMakerSettings)
     nc: NearCertaintiesSettings = field(default_factory=NearCertaintiesSettings)
-    paper: PaperTradingSettings = field(default_factory=PaperTradingSettings)
     general: GeneralSettings = field(default_factory=GeneralSettings)
 
 
