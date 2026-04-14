@@ -66,12 +66,33 @@ class PolymarketClient:
                 logger.error("POLYMARKET_PRIVATE_KEY is empty in .env")
                 return False
 
-            # Step 1: Create client with private key
-            self._clob = ClobClient(
-                host=CLOB_HOST,
-                key=private_key,
-                chain_id=POLYGON_CHAIN_ID,
-            )
+            # Step 1: Create client with private key.
+            # If a funder_address is configured, the account is a Polymarket
+            # Gnosis Safe proxy — the EOA signs but funds live at the Safe.
+            # signature_type=2 (POLY_GNOSIS_SAFE) tells py-clob-client to
+            # sign orders on behalf of the Safe and report its balance.
+            # Accounts created via the Polymarket web UI are Safe-based by
+            # default, so most users will have this set.
+            funder = settings.polymarket.funder_address.strip()
+            if funder:
+                self._clob = ClobClient(
+                    host=CLOB_HOST,
+                    key=private_key,
+                    chain_id=POLYGON_CHAIN_ID,
+                    signature_type=2,  # POLY_GNOSIS_SAFE
+                    funder=funder,
+                )
+                logger.info(
+                    f"Polymarket CLOB client in Gnosis Safe mode "
+                    f"(funder: {funder[:10]}...{funder[-6:]})"
+                )
+            else:
+                self._clob = ClobClient(
+                    host=CLOB_HOST,
+                    key=private_key,
+                    chain_id=POLYGON_CHAIN_ID,
+                )
+                logger.info("Polymarket CLOB client in EOA mode (no funder)")
 
             # Step 2: Derive CLOB API credentials from private key
             # This calls Polymarket's server to create/retrieve your CLOB keys.

@@ -39,11 +39,19 @@ class PolymarketCredentials:
 
     frozen=True means these can't be accidentally changed at runtime.
     The private key is used by py-clob-client to derive API L2 headers.
+
+    funder_address: Polymarket accounts created via the web UI use a
+    Gnosis Safe proxy. The EOA (derived from private_key) signs, but the
+    USDC funds live at the Safe address. If set, the CLOB client runs in
+    POLY_GNOSIS_SAFE mode (signature_type=2) and reports balances against
+    the Safe. If empty, the client runs in direct EOA mode. You can find
+    the Safe address in Polymarket UI → profile → deposit.
     """
     api_key: str = field(default_factory=lambda: _env("POLYMARKET_API_KEY"))
     api_secret: str = field(default_factory=lambda: _env("POLYMARKET_API_SECRET"))
     api_passphrase: str = field(default_factory=lambda: _env("POLYMARKET_API_PASSPHRASE"))
     private_key: str = field(default_factory=lambda: _env("POLYMARKET_PRIVATE_KEY"))
+    funder_address: str = field(default_factory=lambda: _env("POLYMARKET_FUNDER_ADDRESS"))
 
 
 # ============================================================
