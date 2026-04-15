@@ -15,10 +15,16 @@ Usage:
 """
 
 import logging
+import time
 from typing import Any
+
+import httpx
 
 from config.settings import settings
 from core.supabase_client import db
+
+POLYMARKET_ACTIVITY_URL = "https://data-api.polymarket.com/activity"
+VOLUME_CACHE_TTL_SECONDS = 60.0
 
 logger = logging.getLogger(__name__)
 
@@ -278,13 +284,83 @@ class Journal:
     # (/status, hourly summary, daily report, startup) shows the same
     # number derived from the same source of truth (polybuk.trades).
 
-    def get_cumulative_volume(self) -> float:
-        """Total USDC volume across every LIVE row in polybuk.trades.
+    # Cache state for Polymarket volume queries (module-level via class attrs
+    # so every Journal instance / import shares the same cache window).
+    _pm_vol_cache: float = 0.0
+    _pm_vol_cache_ts: float = 0.0
 
-        Filters out paper_trade=True rows — those are historical data
-        from the retired paper-trading module and must not inflate the
-        Referral Program progress KPI.
+    def _fetch_polymarket_volume(self) -> float | None:
+        """Fetch total trading volume from Polymarket's data-api.
+
+        Volume semantics match Polymarket's Referral Program widget:
+        each TRADE contributes `size × $1` (notional binary — every
+        contract pays $1 at resolution). This is different from the
+        "cash volume" of size × price. We verified on 2026-04-15 that
+        summing size across TRADE events equals the number shown in
+        the Polymarket UI.
+
+        Paginates the activity endpoint; returns None on error so the
+        caller can fall back to the Supabase-derived value.
         """
+        funder = settings.polymarket.funder_address.strip()
+        if not funder:
+            return None
+        try:
+            total_contracts = 0.0
+            offset = 0
+            page_size = 500
+            while True:
+                r = httpx.get(
+                    POLYMARKET_ACTIVITY_URL,
+                    params={
+                        "user": funder,
+                        "type": "TRADE",
+                        "limit": page_size,
+                        "offset": offset,
+                    },
+                    timeout=8.0,
+                )
+                r.raise_for_status()
+                batch = r.json() or []
+                if not batch:
+                    break
+                for t in batch:
+                    try:
+                        total_contracts += float(t.get("size") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                if len(batch) < page_size:
+                    break
+                offset += page_size
+                # Safety cap — prevent runaway paging
+                if offset > 50_000:
+                    break
+            return round(total_contracts, 2)
+        except Exception as e:
+            logger.error(f"Polymarket volume fetch failed: {e}")
+            return None
+
+    def get_cumulative_volume(self) -> float:
+        """Total trading volume, sourced from Polymarket data-api.
+
+        This is the SAME number Polymarket shows in the Referral
+        Program widget. Cached for 60s to avoid hammering data-api.
+        Falls back to a Supabase-derived sum of notional_value if the
+        API call fails (legacy path — the value will be lower than
+        the official number because Supabase only tracks fills our
+        own fill_tracker has logged).
+        """
+        now = time.time()
+        if now - self._pm_vol_cache_ts < VOLUME_CACHE_TTL_SECONDS:
+            return self._pm_vol_cache
+
+        fetched = self._fetch_polymarket_volume()
+        if fetched is not None:
+            Journal._pm_vol_cache = fetched
+            Journal._pm_vol_cache_ts = now
+            return fetched
+
+        # Fallback: Supabase-derived (legacy, may undercount)
         try:
             resp = (
                 db._client.table("trades")
@@ -297,8 +373,8 @@ class Journal:
             )
             return round(total, 2)
         except Exception as e:
-            logger.error(f"get_cumulative_volume failed: {e}")
-            return 0.0
+            logger.error(f"Supabase volume fallback failed: {e}")
+            return self._pm_vol_cache  # last known
 
     def get_volume_since(self, since_iso: str) -> float:
         """USDC live volume since a given ISO 8601 timestamp (UTC)."""
