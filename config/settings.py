@@ -105,9 +105,11 @@ class RiskSettings:
     reserve: float = 15.0           # Buffer for gas / settlement slippage
 
     # Circuit breakers — sized to the live test capital
-    max_daily_loss_per_pool: float = 5.0     # Pause pool until tomorrow
+    # daily_loss raised from $5 to $10 per operator request to allow more
+    # runway in Phase 1 (join top of book → more fills → real P&L variance)
+    max_daily_loss_per_pool: float = 10.0    # Pause pool until tomorrow
     max_cumulative_loss_per_pool: float = 15.0  # Stop pool permanently
-    max_total_loss: float = 20.0             # Stop EVERYTHING (40% drawdown)
+    max_total_loss: float = 20.0             # Stop EVERYTHING (20% drawdown of $99)
     max_mm_exposure_contracts: int = 100     # Only allow reducing positions
     max_consecutive_api_errors: int = 3      # Pause all trading
 
@@ -127,10 +129,10 @@ class MarketMakerSettings:
     It runs every 30 seconds, cancels stale orders, and adjusts prices
     based on inventory (skew function).
     """
-    order_size: int = 20               # Contracts per order
-    half_spread_offset: float = 0.01   # Added to each side of mid price
+    order_size: int = 10               # Contracts per order (Phase 1: 20 -> 10 to fit more markets)
+    half_spread_offset: float = 0.00   # Deprecated: pricing now joins best bid/ask
     max_exposure: int = 50             # Max net contracts in one direction
-    stale_order_seconds: int = 180     # Cancel orders older than 3 minutes
+    stale_order_seconds: int = 60      # Cancel orders older than 1 minute (was 180)
     min_spread: float = 0.01           # Skip if spread too tight (Polymarket min tick is $0.01)
     max_spread: float = 0.15           # Skip if spread too wide (likely illiquid/risky)
     min_price: float = 0.10            # Don't operate at extremes

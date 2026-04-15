@@ -252,12 +252,15 @@ class PolymarketClient:
     ) -> list[dict[str, Any]]:
         """Get executed trades (fills).
 
-        Used by journal to log completed trades.
+        For POLY_PROXY accounts the maker is the proxy (funder) address,
+        not the EOA. Polymarket attributes trades to whichever address
+        actually holds the position. Falling back to the EOA address for
+        direct-signing accounts.
         """
         try:
-            params = TradeParams(
-                maker_address=self._clob.get_address(),
-            )
+            funder = settings.polymarket.funder_address.strip()
+            maker = funder if funder else self._clob.get_address()
+            params = TradeParams(maker_address=maker)
             if market_id:
                 params.market = market_id
             resp = self._clob.get_trades(params)

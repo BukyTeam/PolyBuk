@@ -231,9 +231,10 @@ class MarketMakerStrategy(BaseStrategy):
         # === STEP 4: CANCEL STALE ORDERS ===
         cancelled = order_manager.cancel_stale_orders(market_id=market.token_id)
 
-        # === STEP 5: CALCULATE PRICES (with skew) ===
+        # === STEP 5: CALCULATE PRICES (join top of book with inventory skew) ===
         my_bid, my_ask = inventory_manager.calculate_prices(
-            mid_price=mid_price,
+            best_bid=best_bid,
+            best_ask=best_ask,
             inventory=inventory,
         )
 

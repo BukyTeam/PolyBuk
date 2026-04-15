@@ -112,20 +112,13 @@ class OrderManager:
 
         execution_time_ms = int(time.time() * 1000) - start_ms
 
-        # --- Log trade ---
-        journal.log_trade(
-            strategy=strategy,
-            market_id=token_id,
-            market_name=market_name,
-            market_category=market_category,
-            side=side,
-            price=price,
-            quantity=size,
-            pool=pool,
-            execution_time_ms=execution_time_ms,
-        )
-
-        # --- Log decision ---
+        # --- Log decision (order PLACEMENT — not a fill) ---
+        # Intentionally do NOT call journal.log_trade() here. Polymarket
+        # replies with status='live' on acceptance, which only means the
+        # order is resting in the book — not that it matched. Real fills
+        # are tracked by core/fill_tracker.py polling data-api/trades and
+        # logging only executed trades into polybuk.trades. Writing on
+        # placement would inflate the volume KPI with ghost rows.
         journal.log_decision(
             strategy=strategy,
             market_id=token_id,
@@ -141,6 +134,7 @@ class OrderManager:
                 "pool": pool,
                 "net_exposure": net_exposure,
                 "execution_time_ms": execution_time_ms,
+                "order_id": resp.get("orderID") or resp.get("id"),
             },
         )
 

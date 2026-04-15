@@ -114,55 +114,57 @@ class InventoryManager:
 
     def calculate_prices(
         self,
-        mid_price: float,
+        best_bid: float,
+        best_ask: float,
         inventory: int,
         max_inventory: int | None = None,
-        half_spread: float | None = None,
     ) -> tuple[float, float]:
-        """Calculate skew-adjusted bid and ask prices.
+        """Calculate prices that JOIN the top of the book, with inventory skew.
 
-        This is the market maker's core pricing algorithm from the spec.
+        Design: in a $0.01-tick market where the typical spread is also
+        $0.01, placing at mid±offset puts us BEHIND the best prices and
+        produces near-zero fills. We join the existing best bid/ask
+        instead (same queue position, but actually fillable).
 
-        How skew works:
-        - If inventory = 0: bid and ask are symmetric around mid price
-        - If inventory > 0 (long): shift BOTH prices DOWN to encourage
-          selling (we want to reduce our long position)
-        - If inventory < 0 (short): shift BOTH prices UP to encourage
-          buying (we want to reduce our short position)
+        Skew shifts BOTH sides down when long / up when short:
+        - Inventory 0          → bid=best_bid, ask=best_ask (pure join)
+        - Inventory > 0 (long) → both shifted down (encourage selling)
+        - Inventory < 0 (short)→ both shifted up (encourage buying)
 
-        The shift amount is proportional to how full our inventory is
-        relative to the max allowed.
+        Shift is proportional to inventory fullness vs max_exposure.
+        At max inventory the shift is $0.02 (2 ticks), which in a $0.01
+        spread means our SELL will cross the bid and fill as a taker —
+        exactly what we want when we need to dump.
 
         Args:
-            mid_price: Current midpoint from order book
-            inventory: Net contracts (from get_net_inventory)
+            best_bid: Current best bid on the book
+            best_ask: Current best ask on the book
+            inventory: Net contracts we hold (from get_net_inventory)
             max_inventory: Override max exposure (default from settings)
-            half_spread: Override half spread offset (default from settings)
 
         Returns:
             (bid_price, ask_price) — both clamped to [0.05, 0.95]
         """
         if max_inventory is None:
             max_inventory = settings.mm.max_exposure
-        if half_spread is None:
-            half_spread = settings.mm.half_spread_offset
 
-        # Skew: proportional to inventory fullness, max shift of $0.02
-        # When inventory is at max, skew = 0.02 (2 cents shift)
+        # Skew in ticks: 0 when flat, up to $0.02 when inventory == max_inventory
         skew = (inventory / max_inventory) * 0.02 if max_inventory > 0 else 0.0
 
-        # Apply spread and skew
-        my_bid = round(mid_price - half_spread - skew, 2)
-        my_ask = round(mid_price + half_spread - skew, 2)
+        my_bid = round(best_bid - skew, 2)
+        my_ask = round(best_ask - skew, 2)
 
         # Clamp to safe range — never quote at extremes
-        # (spec says 0.10-0.90 for MM, but we use 0.05-0.95 as hard floor/ceiling)
         my_bid = max(0.05, min(0.95, my_bid))
         my_ask = max(0.05, min(0.95, my_ask))
 
+        # Guard: if skew pushed bid >= ask, widen by 1 tick
+        if my_bid >= my_ask:
+            my_ask = round(my_bid + 0.01, 2)
+
         logger.debug(
-            f"Prices: mid=${mid_price:.4f} inv={inventory} skew={skew:.4f} "
-            f"→ bid=${my_bid:.2f} ask=${my_ask:.2f}"
+            f"Prices: bbid=${best_bid:.4f} bask=${best_ask:.4f} "
+            f"inv={inventory} skew={skew:.4f} → bid=${my_bid:.2f} ask=${my_ask:.2f}"
         )
 
         return my_bid, my_ask

@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config.settings import settings
 from core.alerts import alerts
 from core.config_manager import config_manager
+from core.fill_tracker import fill_tracker
 from core.journal import journal
 from core.order_manager import order_manager
 from core.polymarket_client import polymarket_client
@@ -186,7 +187,13 @@ async def main() -> None:
     # Start Telegram command listener (for /kill, /status)
     await alerts.start_polling()
 
-    # Run all strategies concurrently
+    # Fill tracker runs alongside strategies — polls Polymarket for real
+    # executed fills every 30s and writes them to polybuk.trades. This
+    # is the ONLY path that logs real fills (order placements no longer
+    # write to trades since 2026-04-15 to stop inflating the volume KPI).
+    tasks.append(fill_tracker.loop())
+
+    # Run all strategies + fill tracker concurrently
     try:
         await asyncio.gather(*tasks)
     except asyncio.CancelledError:
