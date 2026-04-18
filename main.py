@@ -28,7 +28,6 @@ from core.alerts import alerts
 from core.config_manager import config_manager
 from core.fill_tracker import fill_tracker
 from core.journal import journal
-from core.order_manager import order_manager
 from core.polymarket_client import polymarket_client
 from core.risk_manager import risk_manager
 from core.supabase_client import db

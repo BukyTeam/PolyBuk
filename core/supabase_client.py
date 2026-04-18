@@ -230,7 +230,7 @@ class SupabaseClient:
         Returns True if the query succeeds, False otherwise.
         """
         try:
-            resp = self._client.table("human_decisions").select("id").limit(1).execute()
+            self._client.table("human_decisions").select("id").limit(1).execute()
             logger.info("Supabase connection test: OK")
             return True
         except Exception as e:

@@ -27,7 +27,6 @@ from typing import Any
 
 from core.journal import journal
 from core.polymarket_client import polymarket_client
-from core.supabase_client import db
 
 logger = logging.getLogger(__name__)
 

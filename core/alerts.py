@@ -18,9 +18,7 @@ Usage:
     await alerts.start_command_listener()
 """
 
-import asyncio
 import logging
-from typing import Any
 
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, ContextTypes

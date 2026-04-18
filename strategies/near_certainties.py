@@ -21,7 +21,7 @@ The profit per trade is small, but the win rate should be very high
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any
 
 from config.markets import Market, get_nc_markets

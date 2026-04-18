@@ -41,8 +41,6 @@ Example:
 import logging
 from abc import ABC, abstractmethod
 
-from core.journal import journal
-from core.order_manager import order_manager
 from core.risk_manager import risk_manager
 
 logger = logging.getLogger(__name__)
