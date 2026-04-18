@@ -93,23 +93,25 @@ class OrderManager:
 
         # --- Execute order ---
         start_ms = int(time.time() * 1000)
-        resp = polymarket_client.place_limit_order(
+        result = polymarket_client.place_limit_order(
             token_id=token_id,
             side=side,
             price=price,
             size=float(size),
         )
-        if resp is None:
+        if not result["ok"]:
             risk_manager.record_api_error()
             journal.log_decision(
                 strategy=strategy,
                 market_id=token_id,
                 action="order_failed",
-                reason="API call to place_limit_order returned None",
+                reason=f"{result['error_type']}: {result['error']}",
+                context=result["error_context"],
             )
             return None
         risk_manager.record_api_success()
 
+        resp = result["resp"]
         execution_time_ms = int(time.time() * 1000) - start_ms
 
         # --- Log decision (order PLACEMENT — not a fill) ---

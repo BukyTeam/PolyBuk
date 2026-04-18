@@ -173,7 +173,7 @@ class PolymarketClient:
         side: str,
         price: float,
         size: float,
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any]:
         """Place a limit order (GTC = Good-Til-Cancelled).
 
         Args:
@@ -182,7 +182,10 @@ class PolymarketClient:
             price: Price per contract (0.01 to 0.99)
             size: Number of contracts
 
-        Returns the API response dict, or None on error.
+        Returns a structured result dict (never None):
+            Success: {"ok": True, "resp": <Polymarket response dict>}
+            Failure: {"ok": False, "error": str, "error_type": str,
+                      "error_context": {"token_id", "side", "price", "size"}}
 
         Why GTC: Our market maker cancels stale orders every 180 seconds.
         GTC means the order stays until we cancel it or it fills.
@@ -199,13 +202,23 @@ class PolymarketClient:
             logger.info(
                 f"Order placed: {side} {size}x @ ${price:.4f} on {token_id[:16]}..."
             )
-            return resp
+            return {"ok": True, "resp": resp}
         except Exception as e:
             logger.error(
                 f"place_limit_order failed: {side} {size}x @ ${price:.4f} "
                 f"on {token_id[:16]}...: {e}"
             )
-            return None
+            return {
+                "ok": False,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "error_context": {
+                    "token_id": token_id,
+                    "side": side,
+                    "price": price,
+                    "size": size,
+                },
+            }
 
     def cancel_order(self, order_id: str) -> dict[str, Any] | None:
         """Cancel a single order by ID."""
