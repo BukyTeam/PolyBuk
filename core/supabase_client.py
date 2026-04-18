@@ -219,10 +219,6 @@ class SupabaseClient:
     # Utility
     # ================================================================
 
-    def is_initialized(self) -> bool:
-        """Check if the client was successfully initialized."""
-        return self._client is not None
-
     def test_connection(self) -> bool:
         """Verify we can read from the database.
 

@@ -74,35 +74,6 @@ class TelegramAlerts:
         """
         return await self._send(message)
 
-    async def send_hourly_summary(
-        self,
-        volume_hour: float,
-        pnl_hour: float,
-        mm_pool: float,
-        nc_pool: float,
-        reserve: float,
-    ) -> bool:
-        """Send hourly status update.
-
-        Cumulative volume / target / percent are fetched from the journal
-        (single source of truth: polybuk.trades) so every reporting path
-        shows the same KPI.
-        """
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc).strftime("%H:%M UTC")
-        progress = journal.get_volume_progress()
-
-        msg = (
-            f"Resumen horaria — {now}\n"
-            f"{journal.format_volume_progress(progress)}\n"
-            f"Volumen ultima hora: ${volume_hour:,.2f}\n"
-            f"P&L hora: ${pnl_hour:+,.2f}\n"
-            f"MM Pool: ${mm_pool:,.2f} | NC Pool: ${nc_pool:,.2f} | "
-            f"Reserva: ${reserve:,.2f}"
-        )
-        return await self._send(msg)
-
     async def send_daily_report(
         self,
         date: str,

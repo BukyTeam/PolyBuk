@@ -25,10 +25,6 @@ def _env(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
-def _env_int(key: str, default: int = 0) -> int:
-    return int(_env(key, str(default)))
-
-
 # ============================================================
 # Polymarket API Credentials
 # ============================================================

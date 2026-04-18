@@ -99,8 +99,3 @@ def get_mm_markets() -> list[Market]:
 def get_nc_markets() -> list[Market]:
     """Returns active Near-Certainties markets."""
     return NC_MARKETS
-
-
-def get_all_markets() -> list[Market]:
-    """Returns all active markets (both strategies)."""
-    return MM_MARKETS + NC_MARKETS

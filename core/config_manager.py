@@ -68,31 +68,5 @@ class ConfigManager:
             logger.error(f"Failed to save config snapshot: {e}")
             return None
 
-    def get_latest_snapshot(self) -> dict[str, Any] | None:
-        """Get the most recent config snapshot.
-
-        Useful to compare current settings with what was running before.
-        """
-        rows = db.select(
-            "config_history",
-            order_by="created_at",
-            descending=True,
-            limit=1,
-        )
-        return rows[0] if rows else None
-
-    def get_history(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Get recent config change history.
-
-        Returns list of snapshots, newest first.
-        """
-        return db.select(
-            "config_history",
-            order_by="created_at",
-            descending=True,
-            limit=limit,
-        )
-
-
 # Global instance
 config_manager = ConfigManager()
