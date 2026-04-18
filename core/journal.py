@@ -78,11 +78,6 @@ class Journal:
             "fee_paid": fee_paid,
             "execution_time_ms": execution_time_ms,
             "pool": pool,
-            # The paper_trade column is a historical artifact from the
-            # retired paper-trading module. Set explicitly to False so
-            # live trades don't collide with leftover paper rows when
-            # the volume KPI filters on this column.
-            "paper_trade": False,
         }
         row = db.insert("trades", data)
         if row:
@@ -365,7 +360,6 @@ class Journal:
             resp = (
                 db._client.table("trades")
                 .select("notional_value")
-                .eq("paper_trade", False)
                 .execute()
             )
             total = sum(
@@ -382,7 +376,6 @@ class Journal:
             resp = (
                 db._client.table("trades")
                 .select("notional_value")
-                .eq("paper_trade", False)
                 .gte("created_at", since_iso)
                 .execute()
             )

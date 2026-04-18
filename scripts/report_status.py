@@ -82,7 +82,6 @@ def _fills_in_window(since: datetime) -> tuple[int, float]:
         resp = (
             db._client.table("trades")
             .select("notional_value")
-            .eq("paper_trade", False)
             .gte("created_at", since.isoformat())
             .execute()
         )
