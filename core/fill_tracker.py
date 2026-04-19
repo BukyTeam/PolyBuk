@@ -149,6 +149,7 @@ class FillTracker:
             # Takers pay fee on notional; makers earn a 25% rebate on that fee.
             # If numbers look off, re-check the unit against Polymarket docs.
             notional_value = round(price * size, 6)
+            polymarket_volume = round(size, 4)  # size * $1 — cada contrato binario = $1 de volumen oficial
             fee_rate = fee_rate_bps / 10000.0 if fee_rate_bps else 0.0
             if trader_side == "TAKER":
                 fee_paid = round(notional_value * fee_rate, 6)
@@ -171,6 +172,7 @@ class FillTracker:
                 quantity=size,
                 trader_side=trader_side or None,
                 fee_rate_bps=fee_rate_bps if fee_rate_bps else None,
+                polymarket_volume=polymarket_volume,
                 fee_paid=fee_paid,
                 maker_rebate=maker_rebate,
             )
