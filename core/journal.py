@@ -42,18 +42,20 @@ class Journal:
         market_id: str,
         side: str,
         price: float,
-        quantity: int,
+        quantity: float,
         pool: str,
         market_name: str | None = None,
         market_category: str | None = None,
         order_type: str = "LIMIT",
+        trader_side: str | None = None,
+        fee_rate_bps: float | None = None,
         maker_rebate: float | None = None,
         fee_paid: float | None = None,
         execution_time_ms: int | None = None,
     ) -> dict[str, Any] | None:
         """Log an executed trade.
 
-        Called by order_manager after an order fills.
+        Called by fill_tracker after a real fill is detected on Polymarket.
         The notional_value (price x quantity) is calculated automatically.
 
         Args:
@@ -61,8 +63,10 @@ class Journal:
             market_id: CLOB token_id
             side: "BUY" or "SELL"
             price: Execution price
-            quantity: Number of contracts
+            quantity: Number of contracts (decimal allowed)
             pool: "mm_pool" or "nc_pool"
+            trader_side: "MAKER" or "TAKER" — our role in the fill
+            fee_rate_bps: Raw fee rate from CLOB SDK in basis points
         """
         data = {
             "strategy": strategy,
@@ -72,8 +76,10 @@ class Journal:
             "side": side,
             "price": price,
             "quantity": quantity,
-            "notional_value": round(price * quantity, 4),
+            "notional_value": round(price * quantity, 6),
             "order_type": order_type,
+            "trader_side": trader_side,
+            "fee_rate_bps": fee_rate_bps,
             "maker_rebate": maker_rebate,
             "fee_paid": fee_paid,
             "execution_time_ms": execution_time_ms,

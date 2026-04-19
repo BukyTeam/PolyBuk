@@ -25,6 +25,7 @@ import asyncio
 import logging
 from typing import Any
 
+from config.markets import get_mm_markets, get_nc_markets
 from core.journal import journal
 from core.polymarket_client import polymarket_client
 
@@ -39,6 +40,32 @@ class FillTracker:
     def __init__(self):
         self._seen_trade_ids: set[str] = set()
         self._bootstrapped: bool = False
+        self._markets_by_condition_id: dict[str, dict[str, str]] = self._build_market_lookup()
+
+    def _build_market_lookup(self) -> dict[str, dict[str, str]]:
+        """Index configured markets by condition_id for fast metadata lookup.
+
+        Fills from Polymarket carry the market's condition_id (the ``market``
+        field on the CLOB trade). Mapping that to our local config is the
+        only way to recover strategy/pool/category/name — none of which
+        Polymarket returns in the trade payload.
+        """
+        lookup: dict[str, dict[str, str]] = {}
+        for m in get_mm_markets():
+            lookup[m.condition_id] = {
+                "name": m.name,
+                "category": m.category,
+                "strategy": "market_maker",
+                "pool": "mm_pool",
+            }
+        for m in get_nc_markets():
+            lookup[m.condition_id] = {
+                "name": m.name,
+                "category": m.category,
+                "strategy": "near_certainties",
+                "pool": "nc_pool",
+            }
+        return lookup
 
     def _bootstrap_from_db(self) -> None:
         """Load already-logged trade IDs from polybuk.trades on startup.
@@ -93,21 +120,59 @@ class FillTracker:
                 continue
             self._seen_trade_ids.add(tid)
 
+            asset_id = str(f.get("asset_id") or "")
+            condition_id = str(f.get("market") or "")
             side = str(f.get("side") or "").upper()
-            size = _as_int(f.get("size"))
+            size = _as_float(f.get("size"))
             price = _as_float(f.get("price"))
-            asset_id = str(f.get("asset_id") or f.get("market") or "")
-            if not (side and size and price and asset_id):
+            fee_rate_bps = _as_float(f.get("fee_rate_bps"))
+            trader_side = str(f.get("trader_side") or "").upper()
+
+            if not (side and size > 0 and price > 0 and asset_id):
                 logger.warning(f"Skipping malformed fill: {f}")
                 continue
 
+            market_info = self._markets_by_condition_id.get(condition_id)
+            if market_info is None:
+                logger.warning(
+                    f"Fill on unconfigured market: condition_id={condition_id[:16]}... "
+                    f"asset_id={asset_id[:16]}... Using fallback strategy=market_maker."
+                )
+                market_info = {
+                    "name": "unknown",
+                    "category": "unknown",
+                    "strategy": "market_maker",
+                    "pool": "mm_pool",
+                }
+
+            # fee_rate_bps is raw basis points from the CLOB SDK (10000 bps = 100%).
+            # Takers pay fee on notional; makers earn a 25% rebate on that fee.
+            # If numbers look off, re-check the unit against Polymarket docs.
+            notional_value = round(price * size, 6)
+            fee_rate = fee_rate_bps / 10000.0 if fee_rate_bps else 0.0
+            if trader_side == "TAKER":
+                fee_paid = round(notional_value * fee_rate, 6)
+                maker_rebate = 0.0
+            elif trader_side == "MAKER":
+                fee_paid = 0.0
+                maker_rebate = round(notional_value * fee_rate * 0.25, 6)
+            else:
+                fee_paid = None
+                maker_rebate = None
+
             row = journal.log_trade(
-                strategy="market_maker",
+                strategy=market_info["strategy"],
+                pool=market_info["pool"],
                 market_id=asset_id,
+                market_name=market_info["name"],
+                market_category=market_info["category"],
                 side=side,
                 price=price,
                 quantity=size,
-                pool="mm_pool",
+                trader_side=trader_side or None,
+                fee_rate_bps=fee_rate_bps if fee_rate_bps else None,
+                fee_paid=fee_paid,
+                maker_rebate=maker_rebate,
             )
             if row:
                 new_count += 1
