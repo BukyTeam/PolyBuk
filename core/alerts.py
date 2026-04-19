@@ -18,7 +18,10 @@ Usage:
     await alerts.start_command_listener()
 """
 
+import asyncio
 import logging
+import re
+import time
 
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -30,6 +33,23 @@ from core.risk_manager import risk_manager
 logger = logging.getLogger(__name__)
 
 
+CRITICAL_PREFIXES = (
+    "KILL SWITCH",
+    "CIRCUIT BREAKER",
+    "PolyBuk iniciado",
+    "PolyBuk detenido",
+    "MERCADO RESUELTO",
+    "AUTH",
+    "ClobAuth",
+)
+CRITICAL_KEYWORDS = ("CRITICAL", "CRITICO")
+
+RATE_LIMIT_WINDOW_SECONDS = 15 * 60   # 15 minutes per fingerprint
+SUMMARY_INTERVAL_SECONDS = 30 * 60    # 30 minutes between silenced-alert summaries
+HOURLY_SUMMARY_INTERVAL_SECONDS = 60 * 60  # 1 hour between operational summaries
+FINGERPRINT_LENGTH = 40
+
+
 class TelegramAlerts:
     """Sends alerts and receives commands via Telegram."""
 
@@ -37,6 +57,11 @@ class TelegramAlerts:
         self._bot: Bot | None = None
         self._app: Application | None = None
         self._chat_id: str = ""
+        # Rate-limiter state. _fingerprints tracks when each normalized
+        # message fingerprint was last sent; _silenced_counters aggregates
+        # how many times a fp has been silenced since the last summary.
+        self._fingerprints: dict[str, dict] = {}
+        self._silenced_counters: dict[str, int] = {}
 
     def initialize(self) -> bool:
         """Set up Telegram bot. Call once at startup.
@@ -67,12 +92,122 @@ class TelegramAlerts:
     # Sending Messages
     # ================================================================
 
-    async def send_alert(self, message: str) -> bool:
-        """Send an immediate alert message.
+    def _classify(self, message: str) -> str:
+        """Return 'CRITICAL' or 'STANDARD' based on prefix/keyword match."""
+        upper = message.upper()
+        for prefix in CRITICAL_PREFIXES:
+            if upper.startswith(prefix.upper()):
+                return "CRITICAL"
+        for keyword in CRITICAL_KEYWORDS:
+            if keyword in upper:
+                return "CRITICAL"
+        return "STANDARD"
 
-        Used for circuit breakers, errors, and critical events.
+    def _fingerprint(self, message: str) -> str:
+        """Normalize first N chars, strip digits so varying numbers collapse."""
+        normalized = message.lower().strip()[:FINGERPRINT_LENGTH]
+        normalized = re.sub(r"\d+", "", normalized)
+        return normalized
+
+    async def send_alert(self, message: str) -> bool:
+        """Send an immediate alert message, respecting rate limits.
+
+        CRITICAL alerts (kill switch, circuit breaker, auth failures, etc.)
+        bypass all throttling. STANDARD alerts are deduped per fingerprint
+        across a 15-minute window; duplicates are counted into a 30-minute
+        summary. When the kill switch is active, STANDARD alerts are
+        dropped silently so a bug loop can't spam Telegram.
         """
+        now = time.time()
+        classification = self._classify(message)
+
+        if risk_manager._kill_switch_active and classification != "CRITICAL":
+            logger.debug(f"Alert silenced (kill switch active): {message[:60]}...")
+            return False
+
+        if classification == "CRITICAL":
+            return await self._send(message)
+
+        fp = self._fingerprint(message)
+        entry = self._fingerprints.get(fp)
+
+        if entry and (now - entry["last_sent"]) < RATE_LIMIT_WINDOW_SECONDS:
+            self._silenced_counters[fp] = self._silenced_counters.get(fp, 0) + 1
+            logger.debug(f"Alert rate-limited (fp={fp[:20]}...): {message[:60]}...")
+            return False
+
+        self._fingerprints[fp] = {
+            "count": (entry["count"] + 1) if entry else 1,
+            "first_seen": entry["first_seen"] if entry else now,
+            "last_sent": now,
+        }
         return await self._send(message)
+
+    async def silenced_summary_loop(self) -> None:
+        """Every 30 min, emit an aggregated summary of silenced alerts.
+
+        Resets counters after each summary. Run as a background task
+        alongside fill_tracker.loop() in main.py.
+        """
+        logger.info(f"Silenced alerts summary loop started (every {SUMMARY_INTERVAL_SECONDS}s)")
+        while True:
+            try:
+                await asyncio.sleep(SUMMARY_INTERVAL_SECONDS)
+
+                if not self._silenced_counters:
+                    continue
+
+                total = sum(self._silenced_counters.values())
+                top = sorted(
+                    self._silenced_counters.items(),
+                    key=lambda x: x[1],
+                    reverse=True,
+                )[:5]
+
+                lines = [f"Resumen 30 min: {total} alertas silenciadas."]
+                lines.append("Top repetidas:")
+                for fp, count in top:
+                    lines.append(f"  {count}x — {fp[:30]}...")
+
+                await self._send("\n".join(lines))
+                self._silenced_counters.clear()
+
+            except Exception as e:
+                logger.error(f"Silenced summary loop error: {e}", exc_info=True)
+
+    async def send_hourly_summary(self) -> bool:
+        """Send an operational summary: volume, P&L, pools, trades in the last hour."""
+        from datetime import datetime, timezone, timedelta
+
+        now_utc = datetime.now(timezone.utc)
+        hour_ago = (now_utc - timedelta(hours=1)).isoformat()
+
+        progress = journal.get_volume_progress()
+        volume_hour = journal.get_volume_since(hour_ago)
+
+        status = risk_manager.get_status()
+
+        msg = (
+            f"Resumen horario — {now_utc.strftime('%H:%M UTC')}\n"
+            f"{journal.format_volume_progress(progress)}\n"
+            f"Volumen ultima hora: ${volume_hour:,.2f}\n"
+            f"Pools: MM ${status['pool_balances']['mm_pool']:,.2f} | "
+            f"NC ${status['pool_balances']['nc_pool']:,.2f} | "
+            f"Reserva ${status['pool_balances']['reserve']:,.2f}\n"
+            f"P&L hoy: MM ${status['daily_pnl']['mm_pool']:+,.2f} | "
+            f"NC ${status['daily_pnl']['nc_pool']:+,.2f}"
+        )
+        return await self._send(msg)
+
+    async def hourly_summary_loop(self) -> None:
+        """Loop that emits the hourly operational summary."""
+        logger.info(f"Hourly summary loop started (every {HOURLY_SUMMARY_INTERVAL_SECONDS}s)")
+        while True:
+            try:
+                await asyncio.sleep(HOURLY_SUMMARY_INTERVAL_SECONDS)
+                await self.send_hourly_summary()
+            except Exception as e:
+                logger.error(f"Hourly summary loop error: {e}", exc_info=True)
 
     async def send_daily_report(
         self,

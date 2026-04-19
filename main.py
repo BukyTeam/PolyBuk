@@ -191,6 +191,8 @@ async def main() -> None:
     # is the ONLY path that logs real fills (order placements no longer
     # write to trades since 2026-04-15 to stop inflating the volume KPI).
     tasks.append(fill_tracker.loop())
+    tasks.append(alerts.silenced_summary_loop())
+    tasks.append(alerts.hourly_summary_loop())
 
     # Run all strategies + fill tracker concurrently
     try:
