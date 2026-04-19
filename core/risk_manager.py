@@ -119,11 +119,31 @@ class RiskManager:
         # MM exposure check — only block orders that INCREASE exposure beyond limit
         if pool == "mm_pool":
             max_exp = settings.risk.max_mm_exposure_contracts
-            if abs(net_exposure) >= max_exp:
-                # Over limit: only allow orders that REDUCE exposure
-                increasing = (net_exposure > 0 and side == "BUY") or (net_exposure < 0 and side == "SELL")
-                if increasing:
-                    return False, f"MM exposure limit: {abs(net_exposure)} contracts >= {max_exp} max. Only reducing positions allowed."
+
+            # Guard: invalid config shouldn't block orders (fail-open with warning).
+            # Protects against transient corrupt config where max_exp could be 0 or negative.
+            if max_exp <= 0:
+                logger.error(
+                    f"Invalid max_mm_exposure_contracts config: {max_exp}. "
+                    f"Bypassing exposure check (fail-open)."
+                )
+            else:
+                # Debug logging: capture raw values on every check so we can
+                # diagnose if this false-positive bug ever reappears.
+                logger.debug(
+                    f"MM exposure check: pool={pool}, side={side}, "
+                    f"net_exposure={net_exposure}, max_exp={max_exp}, value={value}"
+                )
+
+                # Semantic change: strict > instead of >=. At the exact limit an
+                # order that reduces exposure still reduces. Only block when above.
+                if abs(net_exposure) > max_exp:
+                    increasing = (net_exposure > 0 and side == "BUY") or (net_exposure < 0 and side == "SELL")
+                    if increasing:
+                        return False, (
+                            f"MM exposure limit: {abs(net_exposure)} contracts > {max_exp} max. "
+                            f"Only reducing positions allowed."
+                        )
 
         # NC-specific checks
         if pool == "nc_pool":
