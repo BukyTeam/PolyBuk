@@ -105,18 +105,43 @@ def analyze(trades):
     print(f"Optional keys (missing in at least one): {optional}")
 
 
-def main():
+def resolve_user_address():
+    """Return (address, source) where source is 'funder_address' or 'derived_EOA'.
+
+    Prefer explicit POLYMARKET_FUNDER_ADDRESS (Gnosis Safe mode).
+    Fall back to deriving the EOA from POLYMARKET_PRIVATE_KEY (direct EOA mode),
+    matching how py-clob-client itself signs requests.
+    """
     funder = settings.polymarket.funder_address
-    if not funder:
-        print("ERROR: POLYMARKET_FUNDER_ADDRESS not set in .env")
+    if funder and funder.strip():
+        return funder.strip(), "funder_address"
+
+    pk = os.environ.get("POLYMARKET_PRIVATE_KEY") or settings.polymarket.private_key
+    if not pk:
+        return None, None
+
+    from eth_account import Account
+    acct = Account.from_key(pk)
+    return acct.address, "derived_EOA"
+
+
+def main():
+    address, source = resolve_user_address()
+    if not address:
+        print(
+            "ERROR: neither POLYMARKET_FUNDER_ADDRESS nor POLYMARKET_PRIVATE_KEY "
+            "is set in .env — cannot resolve a user address for the query."
+        )
         sys.exit(1)
 
-    print(f"Funder: {funder[:6]}...{funder[-4:]}")
+    redacted = f"{address[:6]}...{address[-4:]}"
+    print(f"Strategy: {source}")
+    print(f"User address (redacted): {redacted}")
 
     try:
         data = fetch(
             "https://data-api.polymarket.com/activity",
-            {"user": funder, "type": "TRADE", "limit": 10},
+            {"user": address, "type": "TRADE", "limit": 10},
         )
     except Exception as e:
         print(f"  ERROR on /activity: {type(e).__name__}: {e}")
@@ -129,7 +154,7 @@ def main():
         try:
             data2 = fetch(
                 "https://data-api.polymarket.com/trades",
-                {"user": funder, "limit": 10},
+                {"user": address, "limit": 10},
             )
             trades = data2 if isinstance(data2, list) else (data2.get("data") if isinstance(data2, dict) else [])
             print("Fallback /trades responded.")
