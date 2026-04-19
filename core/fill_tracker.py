@@ -32,6 +32,7 @@ from core.polymarket_client import polymarket_client
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 30
+SANITY_MAX_SIZE = 100_000  # Warn if a fill reports an anomalous size above this
 
 
 class FillTracker:
@@ -131,6 +132,16 @@ class FillTracker:
             if not (side and size > 0 and price > 0 and asset_id):
                 logger.warning(f"Skipping malformed fill: {f}")
                 continue
+
+            if size > SANITY_MAX_SIZE:
+                logger.warning(
+                    f"ANOMALOUS FILL SIZE detected (sanity check). "
+                    f"size={size}, price={price}, side={side}, "
+                    f"asset_id={asset_id[:16] if asset_id else 'None'}, "
+                    f"condition_id={condition_id[:16] if condition_id else 'None'}, "
+                    f"trader_side={trader_side}. "
+                    f"Proceeding with insertion but flagging for review."
+                )
 
             market_info = self._markets_by_condition_id.get(condition_id)
             if market_info is None:
