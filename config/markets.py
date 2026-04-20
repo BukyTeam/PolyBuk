@@ -52,16 +52,14 @@ class Market:
 # Start with 1 market. Add more after the live test validates execution.
 
 MM_MARKETS: list[Market] = [
-    # Bayern is the only market kept for the 48h unattended window.
-    # Barça and PSG were removed 2026-04-14 because both resolved within
-    # ~16h — not enough runway for the 2h buffer circuit breaker on a
-    # bot we wanted to leave untouched for two days.
+    # Added 2026-04-20 after NJ droplet teardown + capital recalibration to $102.
+    # Runway ~10 days → plenty of margin for the 2h resolution buffer.
     Market(
-        token_id="107968591323106278367665655742307705452190612363508117328460265642342810950484",
-        condition_id="0x7ee56fa66c1e16ca268f182716b63d8062b204229430724ad85ff5949f7d81d9",
-        name="Bayern Munchen win 2026-04-15",
-        category="sports",
-        notes="Added 2026-04-12. YES=$0.625, 24h vol=$77K, liq=$729K. UCL QF. ~41h to resolution.",
+        token_id="22893138393795740138249503228269517733051888602506683062209713465144747482167",
+        condition_id="0x06a804e8bd1a539829b7db279ad33b2cf0bcf98f315a3b3a8c7623e6230d88fd",
+        name="BTC reaches $80K in April 2026",
+        category="crypto",
+        notes="Added 2026-04-20. YES=$0.445, 24h vol=$961K, liq=$148K, spread=$0.01. Resolves 2026-05-01T04:00Z.",
     ),
 ]
 
