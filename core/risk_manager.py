@@ -20,6 +20,7 @@ Usage:
         journal.log_rejected(...)
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -27,6 +28,24 @@ from typing import Any
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _dispatch_telegram_alert(message: str) -> None:
+    """Fire-and-forget Telegram alert from sync code without crashing.
+
+    Lazy import avoids the core.alerts ↔ core.risk_manager cycle.
+    If no event loop is running (tests, scripts), the alert is skipped
+    silently — the circuit breaker log line still fires, so the signal
+    is not lost, just not delivered to Telegram.
+    """
+    try:
+        from core.alerts import alerts  # lazy — alerts imports risk_manager
+        asyncio.get_running_loop()  # RuntimeError if no running loop
+        asyncio.create_task(alerts.send_alert(message))
+    except RuntimeError:
+        pass
+    except Exception as e:
+        logger.error(f"Telegram dispatch failed: {e}")
 
 
 class RiskManager:
@@ -288,34 +307,53 @@ class RiskManager:
     def _check_circuit_breakers(self, pool: str) -> None:
         """Evaluate all circuit breakers after a P&L change."""
 
-        # Daily loss per pool > $20 → pause until tomorrow
+        # Daily loss per pool → pause until tomorrow
         daily_loss = self._daily_pnl.get(pool, 0.0)
-        if daily_loss < 0 and abs(daily_loss) > settings.risk.max_daily_loss_per_pool:
+        if (
+            daily_loss < 0
+            and abs(daily_loss) > settings.risk.max_daily_loss_per_pool
+            and not self._pool_paused.get(pool, False)
+        ):
             self._pool_paused[pool] = True
-            logger.warning(
-                f"CIRCUIT BREAKER: {pool} paused until tomorrow. "
-                f"Daily loss ${abs(daily_loss):.2f} > "
-                f"${settings.risk.max_daily_loss_per_pool} limit"
+            msg = (
+                f"CIRCUIT BREAKER: {pool} pausado. "
+                f"P&L diario -${abs(daily_loss):.2f} > "
+                f"${settings.risk.max_daily_loss_per_pool} limite. "
+                f"Pool inactivo hasta mañana o reactivación manual."
             )
+            logger.warning(msg)
+            _dispatch_telegram_alert(msg)
 
-        # Cumulative loss per pool > $50 → stop permanently
+        # Cumulative loss per pool → stop permanently
         cum_loss = self._cumulative_pnl.get(pool, 0.0)
-        if cum_loss < 0 and abs(cum_loss) > settings.risk.max_cumulative_loss_per_pool:
+        if (
+            cum_loss < 0
+            and abs(cum_loss) > settings.risk.max_cumulative_loss_per_pool
+            and not self._pool_stopped.get(pool, False)
+        ):
             self._pool_stopped[pool] = True
-            logger.error(
-                f"CIRCUIT BREAKER: {pool} PERMANENTLY STOPPED. "
-                f"Cumulative loss ${abs(cum_loss):.2f} > "
-                f"${settings.risk.max_cumulative_loss_per_pool} limit"
+            msg = (
+                f"CIRCUIT BREAKER: {pool} DETENIDO PERMANENTEMENTE. "
+                f"P&L acumulado -${abs(cum_loss):.2f} > "
+                f"${settings.risk.max_cumulative_loss_per_pool} limite."
             )
+            logger.error(msg)
+            _dispatch_telegram_alert(msg)
 
-        # Total loss > $80 → stop everything
-        if self._total_pnl < 0 and abs(self._total_pnl) > settings.risk.max_total_loss:
+        # Total loss → stop everything
+        if (
+            self._total_pnl < 0
+            and abs(self._total_pnl) > settings.risk.max_total_loss
+            and not self._all_stopped
+        ):
             self._all_stopped = True
-            logger.critical(
-                f"CIRCUIT BREAKER: ALL TRADING STOPPED. "
-                f"Total loss ${abs(self._total_pnl):.2f} > "
-                f"${settings.risk.max_total_loss} limit"
+            msg = (
+                f"CIRCUIT BREAKER: TODO EL TRADING DETENIDO. "
+                f"P&L total -${abs(self._total_pnl):.2f} > "
+                f"${settings.risk.max_total_loss} limite."
             )
+            logger.critical(msg)
+            _dispatch_telegram_alert(msg)
 
     def _check_daily_reset(self) -> None:
         """Reset daily P&L and unpaused pools at midnight UTC.
