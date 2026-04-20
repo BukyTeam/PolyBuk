@@ -90,23 +90,21 @@ class RiskSettings:
     Pools NEVER lend money to each other. Each pool is independent.
     Circuit breakers are safety nets that stop trading when losses exceed limits.
 
-    Sized for the initial $50 live test (2026-04-13). NC is disabled
-    (nc_pool = 0); only Market Maker runs during this phase. If the 3-day
-    test passes, deposit $350 more and re-scale to the spec's $400 design.
+    Recalibrated 2026-04-20 to actual deposited capital of $102 after
+    the Bangalore droplet restart. Only MM runs; NC stays disabled until
+    MM proves stable. Hard kill at -$20 (~20% drawdown), daily pause at -$10.
     """
     # Capital pools (in USDC)
-    total_capital: float = 50.0
-    mm_pool: float = 35.0           # Market Maker only
-    nc_pool: float = 0.0            # Disabled during $50 test
-    reserve: float = 15.0           # Buffer for gas / settlement slippage
+    total_capital: float = 102.0
+    mm_pool: float = 80.0           # Market Maker only
+    nc_pool: float = 0.0            # Disabled
+    reserve: float = 22.0           # Buffer for gas / settlement slippage
 
-    # Circuit breakers — sized to the live test capital
-    # daily_loss raised from $5 to $10 per operator request to allow more
-    # runway in Phase 1 (join top of book → more fills → real P&L variance)
+    # Circuit breakers
     max_daily_loss_per_pool: float = 10.0    # Pause pool until tomorrow
-    max_cumulative_loss_per_pool: float = 15.0  # Stop pool permanently
-    max_total_loss: float = 20.0             # Stop EVERYTHING (20% drawdown of $99)
-    max_mm_exposure_contracts: int = 100     # Only allow reducing positions
+    max_cumulative_loss_per_pool: float = 20.0  # Stop pool permanently (same threshold as total)
+    max_total_loss: float = 20.0             # Stop EVERYTHING (~20% drawdown of $102)
+    max_mm_exposure_contracts: int = 30      # Only allow reducing positions beyond this
     max_consecutive_api_errors: int = 3      # Pause all trading
 
     # Kill switch
@@ -125,9 +123,9 @@ class MarketMakerSettings:
     It runs every 30 seconds, cancels stale orders, and adjusts prices
     based on inventory (skew function).
     """
-    order_size: int = 10               # Contracts per order (Phase 1: 20 -> 10 to fit more markets)
+    order_size: int = 7                # Contracts per order (sized so value stays under $5 cap at $0.665)
     half_spread_offset: float = 0.00   # Deprecated: pricing now joins best bid/ask
-    max_exposure: int = 50             # Max net contracts in one direction
+    max_exposure: int = 30             # Max net contracts in one direction
     stale_order_seconds: int = 60      # Cancel orders older than 1 minute (was 180)
     min_spread: float = 0.01           # Skip if spread too tight (Polymarket min tick is $0.01)
     max_spread: float = 0.15           # Skip if spread too wide (likely illiquid/risky)
@@ -135,7 +133,7 @@ class MarketMakerSettings:
     max_price: float = 0.90            # Don't operate at extremes
     cycle_interval: int = 30           # Seconds between cycles
     resolution_buffer_hours: int = 2   # Close positions before market resolves
-    max_order_value: float = 15.0      # Max USDC per single order
+    max_order_value: float = 5.0       # Max USDC per single order
 
 
 # ============================================================
