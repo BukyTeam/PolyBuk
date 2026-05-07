@@ -401,6 +401,10 @@ class TelegramAlerts:
 
     async def _send(self, message: str) -> bool:
         """Send a message to the configured chat."""
+        if not settings.telegram.alerts_enabled:
+            logger.debug(f"Telegram alerts disabled, dropping: {message[:80]}...")
+            return False
+
         if not self._bot or not self._chat_id:
             logger.debug(f"Telegram not configured, would send: {message[:80]}...")
             return False

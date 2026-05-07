@@ -74,9 +74,18 @@ class SupabaseCredentials:
 
 @dataclass(frozen=True)
 class TelegramCredentials:
-    """Telegram bot for alerts and commands."""
+    """Telegram bot for alerts and commands.
+
+    alerts_enabled is a global kill switch for all outbound messages.
+    Set TELEGRAM_ALERTS_ENABLED=false in .env to silence reports, hourly
+    summaries, circuit-breaker alerts and startup pings without touching
+    the credentials. Incoming /kill and /status commands keep working.
+    """
     bot_token: str = field(default_factory=lambda: _env("TELEGRAM_BOT_TOKEN"))
     chat_id: str = field(default_factory=lambda: _env("TELEGRAM_CHAT_ID"))
+    alerts_enabled: bool = field(
+        default_factory=lambda: _env("TELEGRAM_ALERTS_ENABLED", "true").strip().lower() != "false"
+    )
 
 
 # ============================================================
